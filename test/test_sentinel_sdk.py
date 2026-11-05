@@ -6,6 +6,78 @@ from utils import sentinel
 
 
 class SentinelSdkTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required for the Sentinel SDK runner")
+    def test_runner_preserves_requirements_body_after_probe_and_telemetry_fetches(self):
+        sdk_source = """
+        window.SentinelSDK = {
+          token: async function (flow) {
+            await fetch('/backend-api/sentinel/req', {
+              method: 'POST', body: JSON.stringify({ flow, p: 'test-proof' })
+            });
+            await fetch('/backend-api/sentinel/ping', { method: 'POST' });
+            await fetch('/telemetry', { method: 'POST', body: 'unrelated-body' });
+            return 'test-token';
+          },
+          sessionObserverToken: async function () {
+            await fetch('/backend-api/sentinel/ping');
+            return 'test-observer';
+          }
+        };
+        """
+        result = sentinel._run_sdk(
+            sdk_source=sdk_source,
+            sdk_url="https://example.invalid/sentinel/test-version/sdk.js",
+            flow="test-flow",
+            device_id="test-device",
+            user_agent="test-agent",
+        )
+        self.assertEqual(result["capturedBody"], '{"flow":"test-flow","p":"test-proof"}')
+        self.assertEqual(result["token"], "test-token")
+        self.assertEqual(result["soToken"], "test-observer")
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required for the Sentinel SDK runner")
+    def test_runner_exposes_native_abort_apis_in_both_browser_contexts(self):
+        sdk_source = """
+        // This code executes in both the parent and iframe VM contexts.
+        if (AbortController !== window.AbortController ||
+            AbortSignal !== window.AbortSignal ||
+            DOMException !== window.DOMException) {
+          throw new Error('Abort APIs must also be available on window');
+        }
+        const controller = new AbortController();
+        let abortEvents = 0;
+        controller.signal.addEventListener('abort', () => abortEvents++, { once: true });
+        controller.abort();
+        controller.abort();
+        if (!(controller.signal instanceof AbortSignal) || abortEvents !== 1 ||
+            !(controller.signal.reason instanceof DOMException) ||
+            controller.signal.reason.name !== 'AbortError') {
+          throw new Error('Native abort semantics are missing');
+        }
+        window.SentinelSDK = {
+          token: async function (flow) {
+            const timedSignal = AbortSignal.timeout(1);
+            await new Promise(resolve => setTimeout(resolve, 10));
+            if (!timedSignal.aborted || timedSignal.reason.name !== 'TimeoutError') {
+              throw new Error('AbortSignal.timeout did not abort');
+            }
+            await fetch('/backend-api/sentinel/req', { body: JSON.stringify({ flow }) });
+            return 'test-token';
+          },
+          sessionObserverToken: async () => 'test-observer'
+        };
+        """
+        result = sentinel._run_sdk(
+            sdk_source=sdk_source,
+            sdk_url="https://example.invalid/sentinel/test-version/sdk.js",
+            flow="test-flow",
+            device_id="test-device",
+            user_agent="test-agent",
+        )
+        self.assertEqual(result["token"], "test-token")
+        self.assertEqual(result["soToken"], "test-observer")
+        self.assertEqual(result["capturedBody"], '{"flow":"test-flow"}')
+
     def test_missing_req_body_is_retried_before_posting_requirements(self):
         final_result = {
             "version": "test-version",

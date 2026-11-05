@@ -238,8 +238,9 @@ function addReferenceMarkupInstructions(
 
 function filterImageModels(items: Model[]): ImageModel[] {
   return items
+    .filter((item) => item.kind === "image" || (!item.kind && item.id.toLowerCase().includes("image")))
     .map((item) => String(item.id || "").trim())
-    .filter((id, index, list) => id.toLowerCase().includes("image") && list.indexOf(id) === index);
+    .filter((id, index, list) => id && list.indexOf(id) === index);
 }
 
 function normalizeStoredImageModel(value: string | null, availableModels: ImageModel[]): ImageModel {
@@ -953,14 +954,18 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
         });
       } catch {
         if (!cancelled) {
-          setImageModels(["gpt-image-2"]);
+          setImageModels((current) => current.length ? current : ["gpt-image-2"]);
         }
       }
     };
 
     void loadImageModels();
+    const refreshTimer = window.setInterval(loadImageModels, 5 * 60 * 1000);
+    window.addEventListener("focus", loadImageModels);
     return () => {
       cancelled = true;
+      window.clearInterval(refreshTimer);
+      window.removeEventListener("focus", loadImageModels);
     };
   }, []);
 

@@ -177,24 +177,30 @@ export function ImageChatPanel({
 
   useEffect(() => {
     let active = true;
-    void fetchModels()
+    const loadModels = () => { void fetchModels()
       .then((data) => {
         if (!active) return;
         const textModels = data.data
+          .filter((item) => item.kind !== "image")
           .map((item) => String(item.id || "").trim())
           .filter((id) => {
             const normalized = id.toLowerCase();
             return id && !normalized.includes("image") && normalized !== "gptfree" && !normalized.startsWith("gptfree/");
           });
-        setModels(Array.from(new Set([...DEFAULT_CHAT_MODELS, ...textModels])));
+        setModels(Array.from(new Set(["auto", ...textModels])));
       })
       .catch(() => {
         if (active) {
-          setModels(DEFAULT_CHAT_MODELS);
+          setModels((current) => current.length ? current : DEFAULT_CHAT_MODELS);
         }
-      });
+      }); };
+    loadModels();
+    const refreshTimer = window.setInterval(loadModels, 5 * 60 * 1000);
+    window.addEventListener("focus", loadModels);
     return () => {
       active = false;
+      window.clearInterval(refreshTimer);
+      window.removeEventListener("focus", loadModels);
     };
   }, []);
 

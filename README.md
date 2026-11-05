@@ -99,6 +99,14 @@ environment:
 
 ## 功能
 
+### 自动发现模型
+
+- `GET /v1/models` 合并当前启用账号的上游模型列表，保留模型名称、隐藏标记和能力信息，不再插入固定的“最新聊天模型”。新增同协议模型无需更新代码。
+- 聊天模型缓存 5 分钟，账号增删、类型或状态变化后自动失效；`GET /v1/models?refresh=true` 可立即重新获取。
+- 图片模型由 [OpenAI 官方图片模型目录](https://developers.openai.com/api/reference/resources/images/methods/generate) 自动补齐，每 6 小时更新，并持久化至 `data/image_model_catalog.json`。目录故障时保留上次成功结果；首次获取失败时使用兼容列表。
+- 返回字段 `availability=account` 表示账号接口收录，`availability=catalog` 表示官方图片目录候选，后者不保证单个账号具备调用权限。模型名称识别支持后续主版本、子版本和快照；上游协议改变仍需适配。
+- 聊天、画图和接口说明页每 5 分钟更新模型，切回窗口时也会检查更新。原有的自定义模型输入仍可使用。
+
 ### API 兼容能力
 
 - 兼容 `POST /v1/images/generations` 图片生成接口
@@ -108,6 +116,8 @@ environment:
 - `GET /v1/models` 返回 `gpt-image-2`、`codex-gpt-image-2`、`auto`、`gpt-5`、`gpt-5-1`、`gpt-5-2`、`gpt-5-3`、`gpt-5-3-mini`、
   `gpt-5-mini`
 - 支持通过 `n` 返回多张生成结果
+- 支持 `gpt-image-2.5`、`gpt-image-2.6`，简称默认使用对应的 `sunburst`；也可指定 `gpt-image-2.5-flare`、`gpt-image-2.6-flare` 等完整名称和快照名称。
+- 新版图片模型可用于文生图、图片编辑、Chat Completions 和 Responses。Codex 账号可使用对应的 `codex-` 模型名及 `plus-` / `team-` / `pro-` 前缀；实际可用性取决于上游账号权限。
 - 支持生成可编辑 PPT 文件
 - 支持生成可编辑 PSD 文件
 - 支持 Codex 中的画图接口逆向，仅 `Plus` / `Team` / `Pro` 订阅可用，模型别名为 `codex-gpt-image-2`，如有需要可自行在其他场景映射回

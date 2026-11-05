@@ -22,7 +22,7 @@ from PIL import Image
 from services.account_service import account_service
 from services.config import config
 from services.proxy_service import proxy_settings
-from utils.helper import UpstreamHTTPError, ensure_ok, iter_sse_payloads, new_uuid, split_image_model
+from utils.helper import UpstreamHTTPError, ensure_ok, image_generation_model, iter_sse_payloads, new_uuid, split_image_model
 from utils.log import logger
 from utils.pow import build_legacy_requirements_token, build_proof_token, parse_pow_resources
 from utils.turnstile import solve_turnstile_token
@@ -589,7 +589,7 @@ class OpenAIBackendAPI:
             return config.image_default_model_slug
         if base_model == CODEX_IMAGE_MODEL:
             return base_model
-        return "auto"
+        return image_generation_model(model)
 
     def _image_headers(self, path: str, requirements: ChatRequirements, conduit_token: str = "", accept: str = "*/*") -> \
             Dict[str, str]:
@@ -792,6 +792,7 @@ class OpenAIBackendAPI:
             images: list[str] | None = None,
             size: str | None = None,
             quality: str = "auto",
+            model: str = CODEX_IMAGE_MODEL,
     ) -> Iterator[Dict[str, Any]]:
         if not self.access_token:
             raise RuntimeError("access_token is required for codex image endpoints")
@@ -804,7 +805,7 @@ class OpenAIBackendAPI:
             "input": self._codex_image_input(prompt, images or []),
             "tools": [{
                 "type": "image_generation",
-                "model": "gpt-image-2",
+                "model": image_generation_model(model),
                 "action": "edit" if images else "generate",
                 "size": str(size or "1024x1024"),
                 "quality": str(quality or "auto"),
@@ -2733,6 +2734,14 @@ class OpenAIBackendAPI:
                 "permission": [],
                 "root": slug,
                 "parent": None,
+                "title": str(item.get("title") or slug),
+                "description": str(item.get("description") or ""),
+                "kind": "image" if split_image_model(slug)[1] else "text",
+                "availability": "account" if self.access_token else "anonymous",
+                "discovery_source": "chatgpt_models",
+                "hidden": "hidden" in (item.get("tags") or []),
+                "capabilities": item.get("capabilities") or {},
+                "thinking_efforts": item.get("thinking_efforts") or [],
             })
         data.sort(key=lambda item: item["id"])
         return {"object": "list", "data": data}

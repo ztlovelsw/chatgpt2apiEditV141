@@ -6,6 +6,7 @@ import { ChevronDown, FileArchive, FileText, KeyRound, ListChecks, type LucideIc
 import { Card, CardContent } from "@/components/ui/card";
 import webConfig from "@/constants/common-env";
 import { getStoredAuthSession } from "@/store/auth";
+import { fetchModels } from "@/lib/api";
 
 type ParamRow = [string, string, string];
 
@@ -215,8 +216,6 @@ const docs: ApiDoc[] = [
   },
 ];
 
-const usableModels = ["gptfree", "gptfree/gpt-5.6-sol", "gpt-image-2", "codex-gpt-image-2", "auto", "gpt-5", "gpt-5-1", "gpt-5-2", "gpt-5-3", "gpt-5-3-mini", "gpt-5-mini"];
-
 function ParamTable({ rows }: { rows: ParamRow[] }) {
   return (
     <div className="overflow-hidden rounded-lg border border-stone-200">
@@ -244,9 +243,25 @@ function ParamTable({ rows }: { rows: ParamRow[] }) {
 
 export function ApiDocsCard() {
   const [authKey, setAuthKey] = useState("");
+  const [usableModels, setUsableModels] = useState<string[]>([]);
   const serviceBaseUrl = webConfig.apiUrl.replace(/\/$/, "") || (typeof window !== "undefined" ? window.location.origin : "");
   const openAIBaseUrl = `${serviceBaseUrl}/v1`;
   const displayKey = authKey || "<当前密钥>";
+
+  useEffect(() => {
+    let active = true;
+    const loadModels = () => { void fetchModels().then((result) => {
+      if (active) setUsableModels(result.data.map((item) => item.id));
+    }).catch(() => undefined); };
+    loadModels();
+    const timer = window.setInterval(loadModels, 5 * 60 * 1000);
+    window.addEventListener("focus", loadModels);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+      window.removeEventListener("focus", loadModels);
+    };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -291,7 +306,8 @@ export function ApiDocsCard() {
         </div>
 
         <div className="space-y-2">
-          <div className="text-xs font-medium text-stone-600">常用模型，也可请求 /v1/models 获取</div>
+          <div className="text-xs font-medium text-stone-600">自动发现的模型（/v1/models）</div>
+          <p className="text-xs text-stone-500">图片模型来自官方目录，实际可用性取决于账号权限。</p>
           <div className="flex flex-wrap gap-2">
             {usableModels.map((model) => (
               <span key={model} className="rounded-md border border-stone-200 bg-white px-2 py-1 font-mono text-xs text-stone-700">{model}</span>

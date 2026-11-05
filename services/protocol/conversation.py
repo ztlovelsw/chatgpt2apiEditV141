@@ -20,7 +20,6 @@ from services.openai_backend_api import (
     OpenAIBackendAPI,
 )
 from utils.helper import (
-    IMAGE_MODELS,
     extract_image_from_message_content,
     image_upstream_model,
     is_codex_image_model,
@@ -1228,6 +1227,7 @@ def stream_codex_image_outputs(
         images=request.images or [],
         size=request.size,
         quality=request.quality,
+        model=request.model,
     )))
     if not images:
         raise ImageGenerationError("No image result found in response")
@@ -1533,7 +1533,7 @@ def _generate_single_image(
 def stream_image_outputs_with_pool(request: ConversationRequest) -> Iterator[ImageOutput]:
     """并行生成多张图片，每张图片使用独立线程和账号，互不阻塞。"""
     if not is_supported_image_model(request.model):
-        raise ImageGenerationError("unsupported image model,supported models: " + ", ".join(sorted(IMAGE_MODELS)))
+        raise ImageGenerationError("unsupported image model; discover available models with GET /v1/models")
 
     if request.n <= 1:
         # 单张图片，直接执行（无需线程池开销）

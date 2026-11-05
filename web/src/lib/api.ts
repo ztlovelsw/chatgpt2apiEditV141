@@ -121,6 +121,12 @@ export type Model = {
   permission: unknown[];
   root: string;
   parent: string | null;
+  title?: string;
+  kind?: "text" | "image";
+  hidden?: boolean;
+  availability?: "account" | "anonymous" | "catalog" | "alias";
+  discovery_source?: string;
+  alias_for?: string;
 };
 
 type AccountListResponse = {
@@ -495,8 +501,8 @@ export async function fetchAccountDiagnostics(recentLimit = 30) {
   return httpRequest<AccountPoolDiagnostics>(`/api/accounts/diagnostics?recent_limit=${recentLimit}`);
 }
 
-export async function fetchModels() {
-  return httpRequest<ModelListResponse>("/v1/models");
+export async function fetchModels(refresh = false) {
+  return httpRequest<ModelListResponse>(refresh ? "/v1/models?refresh=true" : "/v1/models");
 }
 
 export async function createAccounts(tokens: string[], accounts: AccountImportPayload[] = []) {

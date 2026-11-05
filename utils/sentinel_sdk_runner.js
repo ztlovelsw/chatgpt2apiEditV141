@@ -161,8 +161,13 @@ function makeContext(kind) {
     timeOrigin: Date.now() - 12345,
     memory: { jsHeapSizeLimit: 4294705152 },
   };
-  const fetchImpl = async (_url, opts = {}) => {
-    capturedBody = String(opts.body || "");
+  const fetchImpl = async (url, opts = {}) => {
+    const path = new URL(url, win.location.href).pathname;
+    const body = String(opts.body || "");
+    // Timing probes and telemetry must not erase the requirements request.
+    if (path === "/backend-api/sentinel/req" && body.trim()) {
+      capturedBody = body;
+    }
     return { json: async () => input.reqData || { token: "dummy-token" } };
   };
   const context = {
@@ -175,6 +180,9 @@ function makeContext(kind) {
     screen,
     performance,
     crypto: globalThis.crypto,
+    AbortController: globalThis.AbortController,
+    AbortSignal: globalThis.AbortSignal,
+    DOMException: globalThis.DOMException,
     TextEncoder,
     URL,
     URLSearchParams,
@@ -203,6 +211,11 @@ function makeContext(kind) {
     matchMedia: win.matchMedia,
     requestAnimationFrame: win.requestAnimationFrame,
   };
+  // Node VM contexts do not inherit the host's Web APIs. SDK code may use
+  // either the global constructors or their window properties.
+  win.AbortController = context.AbortController;
+  win.AbortSignal = context.AbortSignal;
+  win.DOMException = context.DOMException;
   context.globalThis = context;
   return vm.createContext(context);
 }

@@ -12,15 +12,32 @@ from urllib.parse import urlparse
 from curl_cffi import requests
 from fastapi import HTTPException
 from services.proxy_service import proxy_settings
+from services.image_model_catalog import IMAGE_MODEL_PATTERN, cached_image_model_aliases
 from utils.log import logger
 
-BASE_IMAGE_MODELS = {"gpt-image-2", "codex-gpt-image-2"}
+WEB_IMAGE_MODELS = {
+    "gpt-image-2",
+    "gpt-image-2.5",
+    "gpt-image-2.5-sunburst",
+    "gpt-image-2.5-flare",
+    "gpt-image-2.6",
+    "gpt-image-2.6-sunburst",
+    "gpt-image-2.6-flare",
+}
+IMAGE_MODEL_ALIASES = {
+    "gpt-image-2.5": "gpt-image-2.5-sunburst",
+    "gpt-image-2.6": "gpt-image-2.6-sunburst",
+}
+CODEX_IMAGE_MODELS = {f"codex-{model}" for model in WEB_IMAGE_MODELS}
+BASE_IMAGE_MODELS = WEB_IMAGE_MODELS | CODEX_IMAGE_MODELS
+IMAGE_MODEL_RE = re.compile(r"^(?:codex-)?" + IMAGE_MODEL_PATTERN + r"$")
 GPTFREE_MODEL = "gptfree"
 IMAGE_MODEL_PLAN_TYPES = ("plus", "team", "pro")
 CODEX_IMAGE_MODEL = "codex-gpt-image-2"
 PREFIXED_CODEX_IMAGE_MODELS = {
-    f"{plan_type}-{CODEX_IMAGE_MODEL}"
+    f"{plan_type}-{model}"
     for plan_type in IMAGE_MODEL_PLAN_TYPES
+    for model in CODEX_IMAGE_MODELS
 }
 IMAGE_MODELS = BASE_IMAGE_MODELS | PREFIXED_CODEX_IMAGE_MODELS | {GPTFREE_MODEL}
 PUBLIC_IMAGE_MODELS = BASE_IMAGE_MODELS | PREFIXED_CODEX_IMAGE_MODELS | {GPTFREE_MODEL}
@@ -111,7 +128,7 @@ def split_image_model(model: object) -> tuple[str | None, str | None]:
     normalized = str(model or "").strip().lower()
     if not normalized:
         return None, None
-    if normalized in BASE_IMAGE_MODELS:
+    if IMAGE_MODEL_RE.fullmatch(normalized):
         return None, normalized
     if normalized == GPTFREE_MODEL:
         return None, "gpt-image-2"
@@ -119,7 +136,7 @@ def split_image_model(model: object) -> tuple[str | None, str | None]:
         prefix = f"{plan_type}-"
         if normalized.startswith(prefix):
             base_model = normalized[len(prefix):]
-            if base_model == CODEX_IMAGE_MODEL:
+            if base_model.startswith("codex-") and IMAGE_MODEL_RE.fullmatch(base_model):
                 return plan_type, base_model
     return None, None
 
@@ -131,7 +148,16 @@ def is_supported_image_model(model: object) -> bool:
 
 def is_codex_image_model(model: object) -> bool:
     _, base_model = split_image_model(model)
-    return base_model == CODEX_IMAGE_MODEL
+    return base_model is not None and base_model.startswith("codex-")
+
+
+def image_generation_model(model: object) -> str:
+    """Resolve public aliases to the upstream image model, retaining snapshots."""
+    _, base_model = split_image_model(model)
+    if base_model is None:
+        raise ValueError(f"unsupported image model: {model}")
+    image_model = base_model.removeprefix("codex-")
+    return cached_image_model_aliases().get(image_model, IMAGE_MODEL_ALIASES.get(image_model, image_model))
 
 
 def is_gptfree_model(model: object) -> bool:

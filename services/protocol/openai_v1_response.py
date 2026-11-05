@@ -29,7 +29,7 @@ from services.protocol.web_search_tool import (
     search_query_from_messages,
     text_with_url_citations,
 )
-from utils.helper import extract_image_from_message_content, extract_response_prompt, has_response_image_generation_tool
+from utils.helper import extract_image_from_message_content, extract_response_prompt, has_response_image_generation_tool, is_image_chat_request
 from utils.image_tokens import (
     count_image_content_tokens,
     count_image_output_items_tokens,
@@ -69,7 +69,7 @@ def thinking_effort_from_body(body: dict[str, Any]) -> str:
 
 
 def is_text_response_request(body: dict[str, Any]) -> bool:
-    return not has_response_image_generation_tool(body)
+    return not (has_response_image_generation_tool(body) or is_image_chat_request(body))
 
 
 def has_unsupported_response_tools(body: dict[str, Any]) -> bool:
@@ -436,7 +436,8 @@ def response_events(body: dict[str, Any]) -> Iterator[dict[str, Any]]:
     prompt = extract_response_prompt(body.get("input"))
     if not prompt:
         raise HTTPException(status_code=400, detail={"error": "input text is required"})
-    model = str(body.get("model") or "gpt-image-2").strip() or "gpt-image-2"
+    tool = response_image_tool(body)
+    model = str(tool.get("model") or body.get("model") or "gpt-image-2").strip() or "gpt-image-2"
     source_type = "gptfree" if model.lower() == "gptfree" else str(body.get("account_pool") or "default").strip().lower()
     image_info = extract_response_image(body.get("input"))
     if image_info:
@@ -445,7 +446,6 @@ def response_events(body: dict[str, Any]) -> Iterator[dict[str, Any]]:
     else:
         images = None
     input_image_tokens = count_image_content_tokens(_input_image_parts(body.get("input")), model)
-    tool = response_image_tool(body)
     image_outputs = stream_image_outputs_with_pool(ConversationRequest(
         prompt=prompt,
         model=model,
