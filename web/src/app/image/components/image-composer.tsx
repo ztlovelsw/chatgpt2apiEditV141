@@ -672,7 +672,7 @@ export function ImageComposer({
                               <label className="text-xs">帧数（2–16）<Input type="number" min={2} max={16} value={frameCount} onChange={(event) => onFrameCountChange(Number(event.target.value))} /></label>
                               <label className="text-xs">帧间隔（毫秒）<Input type="number" min={20} max={2000} step={10} value={frameDurationMs} onChange={(event) => onFrameDurationMsChange(Number(event.target.value))} /></label>
                             </div>
-                            <p className="text-xs text-stone-500">选择普通图片模型使用官网 GIF 生成。帧数和间隔通过提示词传递，最终动画以返回文件为准；Codex 前缀模型使用独立接口。</p>
+                            <p className="text-xs text-stone-500">支持上传参考图生成 GIF，请选择普通图片模型。帧数和间隔通过提示词传递，最终动画以返回文件为准。</p>
                           </>}
                         </div>
                         <div className="mb-3">

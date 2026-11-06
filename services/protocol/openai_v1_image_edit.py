@@ -4,6 +4,8 @@ from io import BytesIO
 from typing import Any, Iterator
 
 from PIL import Image
+from fastapi import HTTPException
+from utils.image_formats import generation_options
 
 from services.protocol.conversation import (
     ConversationRequest,
@@ -96,6 +98,10 @@ def _append_mask_instructions(prompt: str, guide_count: int) -> str:
 
 
 def handle(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, Any]]:
+    try:
+        output_options = generation_options(body)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail={"error": str(exc)}) from exc
     prompt = str(body.get("prompt") or "")
     images = body.get("images") or []
     masks = body.get("mask") or []
@@ -131,6 +137,7 @@ def handle(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, Any]]:
         progress_callback=progress_callback,
         cancel_event=cancel_event,
         source_type=account_pool,
+        **output_options,
     ))
     if body.get("stream"):
         return stream_image_chunks(outputs)

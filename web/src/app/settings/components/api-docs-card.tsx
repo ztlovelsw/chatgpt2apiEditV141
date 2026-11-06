@@ -103,7 +103,7 @@ const docs: ApiDoc[] = [
     input: [
       ["prompt", "string", "图片生成提示词。"],
       ["model", "string", "可选，默认 gpt-image-2。"],
-      ["output_format", "png | gif", "文生图输出格式，默认 png。普通图片模型通过官网生成 GIF；Codex 前缀模型使用独立接口。Images API 不支持 GIF stream=true。"],
+      ["output_format", "png | gif", "输出格式，默认 png。普通图片模型通过官网生成 GIF；Codex 前缀模型使用独立接口。Images API 不支持 GIF stream=true。"],
       ["frame_count", "integer", "仅 GIF：2–16 帧，默认 9。"],
       ["frame_duration_ms", "integer", "仅 GIF：每帧 20–2000 毫秒，默认 200。"],
       ["n", "number", "可选，生成数量，当前限制 1-4。"],
@@ -130,6 +130,9 @@ const docs: ApiDoc[] = [
       ["image", "file | file[] | URL", "参考图，支持 multipart 上传，也支持 JSON 图片链接。"],
       ["prompt", "string", "编辑提示词。"],
       ["model", "string", "可选，默认 gpt-image-2。"],
+      ["output_format", "png | gif", "默认 png。图生 GIF 使用普通图片模型；Codex 前缀模型暂不支持参考图 GIF。GIF 不支持 stream=true。"],
+      ["frame_count", "integer", "仅 GIF：2–16 帧，默认 9，最终帧数以返回动画为准。"],
+      ["frame_duration_ms", "integer", "仅 GIF：每帧 20–2000 毫秒，默认 200。"],
       ["n", "number", "可选，生成数量，当前限制 1-4。"],
       ["size", "string", "可选，图片尺寸。"],
       ["quality", "string", "可选，默认 auto。"],
@@ -142,7 +145,10 @@ const docs: ApiDoc[] = [
     example: (baseUrl: string, key: string) => `curl ${baseUrl}/images/edits \\
   -H "Authorization: Bearer ${key}" \\
   -F "model=gpt-image-2" \\
-  -F "prompt=改成赛博朋克夜景" \\
+  -F "prompt=让图中的角色挥手，保持原图风格" \\
+  -F "output_format=gif" \\
+  -F "frame_count=9" \\
+  -F "frame_duration_ms=200" \\
   -F "image=@./input.png"`,
   },
   {

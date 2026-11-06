@@ -191,6 +191,9 @@ class ImageTaskService:
         masks: list[tuple[bytes, str, str]] | None = None,
         batch_size: int = 1,
         account_pool: str = "default",
+        output_format: str = "png",
+        frame_count: int | None = None,
+        frame_duration_ms: int | None = None,
     ) -> dict[str, Any]:
         payload = {
             "prompt": prompt,
@@ -205,6 +208,8 @@ class ImageTaskService:
             "_batch_size": max(1, int(batch_size or 1)),
             "account_pool": _clean(account_pool, "default"),
         }
+        payload.update(generation_options({**payload, "output_format": output_format,
+                                           "frame_count": frame_count, "frame_duration_ms": frame_duration_ms}))
         return self._submit(identity, client_task_id=client_task_id, mode="edit", payload=payload)
 
     def list_tasks(self, identity: dict[str, object], task_ids: list[str]) -> dict[str, Any]:

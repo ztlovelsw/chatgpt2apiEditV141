@@ -119,7 +119,21 @@ environment:
 - GIF 文生图可指定 `output_format: "gif"`、`frame_count`（2–16，默认 9）和 `frame_duration_ms`（20–2000，默认 200）。尺寸使用 `auto` 或长宽为 16 倍数的 `WIDTHxHEIGHT`。
 - 普通图片模型通过 ChatGPT 官网图片对话链路生成 GIF，支持 Web/OAuth 账号；Plus 账号已实测成功。帧数、帧间隔通过提示词传递，接口返回实际动画元数据，并过滤同时返回的静态预览图。
 - `codex-` 前缀模型仍使用 `/backend-api/codex/images/generations` 独立接口；该接口可能拒绝 GIF，但不能据此判断账号的官网 GIF 功能不可用。
-- GIF 不支持图片编辑或 Images API 的 `stream=true`。网页图像设置可选择 GIF、设置帧数和帧间隔；生成记录保留参数，原始动画文件以 `.gif` 保存、预览和下载。
+- GIF 支持输入参考图：使用普通图片模型调用 `POST /v1/images/edits`，通过 multipart 上传 `image` 或通过 JSON 提供 `images: [{"image_url":"..."}]`，同时设置 `output_format: "gif"`，可选 `frame_count` 和 `frame_duration_ms`。网页上传参考图后选择 GIF 即可使用，Chat Completions / Responses 的图片输入也支持 GIF 输出。Codex 前缀模型的独立 GIF 接口暂不支持参考图。
+- GIF 不支持 Images API 的 `stream=true`。网页图像设置可选择 GIF、设置帧数和帧间隔；生成记录保留参数，原始动画文件以 `.gif` 保存、预览和下载。
+
+图生 GIF 调用示例（将 `<auth-key>` 替换为自己的密钥）：
+
+```bash
+curl http://localhost:3000/v1/images/edits \
+  -H "Authorization: Bearer <auth-key>" \
+  -F "model=gpt-image-2" \
+  -F "image=@./input.png" \
+  -F "prompt=让图片中的角色挥手，保持原图风格" \
+  -F "output_format=gif" \
+  -F "frame_count=9" \
+  -F "frame_duration_ms=200"
+```
 
 - 兼容 `POST /v1/images/generations` 图片生成接口
 - 兼容 `POST /v1/images/edits` 图片编辑接口

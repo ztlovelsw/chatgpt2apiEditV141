@@ -652,6 +652,7 @@ export async function createImageEditTask(
   masks: File[] = [],
   batchSize = 1,
   accountPool: AccountPool = "default",
+  output: { outputFormat?: "png" | "gif"; frameCount?: number; frameDurationMs?: number } = {},
 ) {
   const formData = new FormData();
   const uploadFiles = Array.isArray(files) ? files : [files];
@@ -673,6 +674,11 @@ export async function createImageEditTask(
   formData.append("quality", quality);
   formData.append("batch_size", String(batchSize));
   formData.append("account_pool", accountPool);
+  formData.append("output_format", output.outputFormat || "png");
+  if (output.outputFormat === "gif") {
+    formData.append("frame_count", String(output.frameCount ?? 9));
+    formData.append("frame_duration_ms", String(output.frameDurationMs ?? 200));
+  }
 
   return httpRequest<ImageTask>("/api/image-tasks/edits", {
     method: "POST",

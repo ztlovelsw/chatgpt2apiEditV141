@@ -1600,6 +1600,7 @@ def stream_image_outputs_with_pool(request: ConversationRequest) -> Iterator[Ima
         raise ImageGenerationError("unsupported image model; discover available models with GET /v1/models")
     try:
         generation_options({"output_format": request.output_format, "frame_count": request.frame_count,
+                            "model": request.model,
                             "frame_duration_ms": request.frame_duration_ms, "images": request.images,
                             "size": request.size, "account_pool": request.source_type})
     except ValueError as exc:

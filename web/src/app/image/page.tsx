@@ -1594,6 +1594,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
                   referencePayload.maskFiles,
                   activeTurn.images.length,
                   activeTurn.accountPool,
+                  activeTurn,
                 )
               : createImageGenerationTask(
                   taskId,
@@ -1663,6 +1664,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
                         referencePayload.maskFiles,
                         activeTurn.images.length,
                         activeTurn.accountPool,
+                        activeTurn,
                       )
                     : createImageGenerationTask(
                         image.taskId || image.id,
@@ -2020,8 +2022,12 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     const combinedReferenceImageFiles = [...referenceImageFiles, ...materialReferenceFiles];
     const combinedReferenceImages = [...referenceImages, ...materialReferenceImages];
     const effectiveImageMode: ImageConversationMode = combinedReferenceImageFiles.length > 0 ? "edit" : "generate";
-    if (imageOutputFormat === "gif" && (effectiveImageMode === "edit" || imageAccountPool === "gptfree")) {
-      toast.error("GIF 仅支持文生图，请移除参考图并使用默认号池");
+    if (imageOutputFormat === "gif" && imageAccountPool === "gptfree") {
+      toast.error("GIF 不支持旧 gptFree 号池，请选择自动或订阅档位号池");
+      return;
+    }
+    if (imageOutputFormat === "gif" && effectiveImageMode === "edit" && /^(?:(?:plus|team|pro)-)?codex-/i.test(imageModel)) {
+      toast.error("图生 GIF 请选择普通图片模型");
       return;
     }
     if (imageOutputFormat === "gif" && (!Number.isInteger(imageFrameCount) || imageFrameCount < 2 || imageFrameCount > 16 ||

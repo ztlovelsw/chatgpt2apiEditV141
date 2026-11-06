@@ -111,6 +111,9 @@ def create_router() -> APIRouter:
                 masks=masks,
                 batch_size=int(payload.get("batch_size") or 1),
                 account_pool=str(payload.get("account_pool") or "default"),
+                output_format=payload["output_format"],
+                frame_count=payload.get("frame_count"),
+                frame_duration_ms=payload.get("frame_duration_ms"),
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail={"error": str(exc)}) from exc

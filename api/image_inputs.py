@@ -15,6 +15,7 @@ from fastapi.concurrency import run_in_threadpool
 from starlette.datastructures import UploadFile
 
 from services.proxy_service import proxy_settings
+from utils.image_formats import generation_options
 
 ImageInput = tuple[bytes, str, str]
 ImageSource = str | UploadFile | ImageInput
@@ -79,8 +80,6 @@ def _parse_account_pool(value: object) -> str:
 
 def _payload_from_fields(fields: dict[str, Any]) -> dict[str, Any]:
     """构造图片编辑载荷：从表单或 JSON 字段提取通用参数。"""
-    if _clean(fields.get("output_format"), "png") != "png":
-        raise HTTPException(status_code=400, detail={"error": "GIF output is supported for generation only"})
     prompt = _clean(fields.get("prompt"))
     if not prompt:
         raise HTTPException(status_code=400, detail={"error": "prompt is required"})
@@ -95,6 +94,16 @@ def _payload_from_fields(fields: dict[str, Any]) -> dict[str, Any]:
         "batch_size": _parse_batch_size(fields.get("batch_size")),
         "account_pool": _parse_account_pool(fields.get("account_pool")),
     }
+    options = {**payload, "output_format": _clean(fields.get("output_format"), "png")}
+    for name in ("frame_count", "frame_duration_ms"):
+        value = fields.get(name)
+        if isinstance(value, str) and value.strip().isdigit():
+            value = int(value.strip())
+        options[name] = value
+    try:
+        payload.update(generation_options(options))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail={"error": str(exc)}) from exc
     if "client_task_id" in fields:
         payload["client_task_id"] = _clean(fields.get("client_task_id"))
     return payload
@@ -204,7 +213,7 @@ async def parse_image_edit_request(request: Request) -> tuple[dict[str, Any], li
 
     form = await request.form()
     fields: dict[str, Any] = {}
-    for key in ("client_task_id", "prompt", "model", "n", "size", "quality", "response_format", "stream", "batch_size", "account_pool"):
+    for key in ("client_task_id", "prompt", "model", "n", "size", "quality", "response_format", "stream", "batch_size", "account_pool", "output_format", "frame_count", "frame_duration_ms"):
         value = form.get(key)
         if isinstance(value, str):
             fields[key] = value

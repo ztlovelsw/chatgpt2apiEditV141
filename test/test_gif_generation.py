@@ -32,7 +32,8 @@ class GifGenerationTests(unittest.TestCase):
                          {"output_format": "gif", "frame_count": 9, "frame_duration_ms": 200})
         for options in (
             {"stream": True}, {"frame_count": 1}, {"frame_count": 17},
-            {"frame_duration_ms": 0}, {"frame_count": True}, {"images": ["ref"]},
+            {"frame_duration_ms": 0}, {"frame_count": True},
+            {"images": ["ref"], "model": "codex-gpt-image-2"},
             {"size": "17x16"}, {"account_pool": "gptfree"},
         ):
             with self.subTest(options=options), self.assertRaises(ValueError):
@@ -215,13 +216,14 @@ class GifGenerationTests(unittest.TestCase):
         output = conversation.ImageOutput(kind="result", model="gpt-image-2.6-flare", index=1, total=1,
                                           data=[gif, preview], conversation_id="web-conversation")
         request = conversation.ConversationRequest(model="gpt-image-2.6-flare", prompt="ball", output_format="gif",
-                                                    frame_count=4, frame_duration_ms=200)
+                                                    frame_count=4, frame_duration_ms=200, images=[{"reference": "test"}])
         with mock.patch.object(conversation, "stream_image_outputs", return_value=iter([output])) as web_stream:
             result = list(conversation.stream_gif_image_outputs(backend, request))
         backend.generate_gif.assert_not_called()
         forwarded = web_stream.call_args.args[1]
         self.assertIn("4 animation frames", forwarded.prompt)
         self.assertIn("200 milliseconds", forwarded.prompt)
+        self.assertEqual(forwarded.images, request.images)
         self.assertEqual(result[0].data, [gif])
         self.assertEqual(result[0].conversation_id, "web-conversation")
 

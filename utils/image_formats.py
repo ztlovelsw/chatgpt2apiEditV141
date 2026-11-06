@@ -3,6 +3,7 @@ from io import BytesIO
 from typing import Any
 
 from PIL import Image
+from utils.helper import is_codex_image_model
 
 
 def generation_options(body: dict[str, Any]) -> dict[str, Any]:
@@ -16,8 +17,8 @@ def generation_options(body: dict[str, Any]) -> dict[str, Any]:
         return {"output_format": "png"}
     if body.get("stream"):
         raise ValueError("GIF generation does not support stream=true")
-    if body.get("images") or body.get("image") or body.get("mask"):
-        raise ValueError("GIF output is supported for generation only")
+    if is_codex_image_model(body.get("model")) and (body.get("images") or body.get("image") or body.get("mask")):
+        raise ValueError("Codex GIF generation does not support reference images; use a regular image model")
     if body.get("account_pool") == "gptfree":
         raise ValueError("GIF generation is not supported by the gptFree account pool")
     frames = 9 if frames is None else frames
