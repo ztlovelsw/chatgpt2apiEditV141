@@ -72,13 +72,15 @@ def _parse_batch_size(value: object) -> int:
 
 def _parse_account_pool(value: object) -> str:
     account_pool = _clean(value, "default").lower()
-    if account_pool not in {"default", "gptfree"}:
-        raise HTTPException(status_code=400, detail={"error": "account_pool must be default or gptfree"})
+    if account_pool not in {"default", "free", "plus", "pro", "gptfree"}:
+        raise HTTPException(status_code=400, detail={"error": "account_pool must be default, free, plus, pro or gptfree"})
     return account_pool
 
 
 def _payload_from_fields(fields: dict[str, Any]) -> dict[str, Any]:
     """构造图片编辑载荷：从表单或 JSON 字段提取通用参数。"""
+    if _clean(fields.get("output_format"), "png") != "png":
+        raise HTTPException(status_code=400, detail={"error": "GIF output is supported for generation only"})
     prompt = _clean(fields.get("prompt"))
     if not prompt:
         raise HTTPException(status_code=400, detail={"error": "prompt is required"})

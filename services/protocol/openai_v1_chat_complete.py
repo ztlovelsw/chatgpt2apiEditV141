@@ -308,6 +308,9 @@ def image_chat_response(body: dict[str, Any]) -> dict[str, Any]:
         response_format="b64_json",
         images=encode_images(images) or None,
         source_type=source_type,
+        output_format=str(body.get("output_format") or "png"),
+        frame_count=body.get("frame_count"),
+        frame_duration_ms=body.get("frame_duration_ms"),
     )))
     response = completion_response(model, image_result_content(result), int(result.get("created") or 0) or None)
     usage = image_usage(
@@ -329,6 +332,9 @@ def image_chat_events(body: dict[str, Any]) -> Iterator[dict[str, Any]]:
         response_format="b64_json",
         images=encode_images(images) or None,
         source_type=source_type,
+        output_format=str(body.get("output_format") or "png"),
+        frame_count=body.get("frame_count"),
+        frame_duration_ms=body.get("frame_duration_ms"),
     ))
     yield from stream_image_chat_completion(image_outputs, model)
 
@@ -374,11 +380,11 @@ def handle(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, Any]]:
         return chat_completion_cache.get_or_compute_stream(
             key,
             lambda: stream_text_chat_completion(
-                text_backend("default"),
+                text_backend(account_pool),
                 messages,
                 model,
                 thinking_effort,
-                "default",
+                account_pool,
             ),
         )
     if is_image_chat_request(body):
@@ -396,12 +402,12 @@ def handle(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, Any]]:
         lambda: completion_response(
             model,
             collect_text(
-                text_backend("default"),
+                text_backend(account_pool),
                 ConversationRequest(
                     model=model,
                     messages=messages,
                     thinking_effort=thinking_effort,
-                    source_type="default",
+                    source_type=account_pool,
                 ),
             ),
             messages=messages,

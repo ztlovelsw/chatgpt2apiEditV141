@@ -5,6 +5,7 @@ from typing import Literal
 from fastapi import APIRouter, Header, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
+from utils.account_pools import AccountPool
 
 from api.image_inputs import parse_image_edit_request, read_image_sources
 from api.support import require_identity, resolve_image_base_url
@@ -20,7 +21,10 @@ class ImageGenerationTaskRequest(BaseModel):
     size: str | None = None
     quality: str = "auto"
     batch_size: int = Field(default=1, ge=1, le=10)
-    account_pool: Literal["default", "gptfree"] = "default"
+    account_pool: AccountPool = "default"
+    output_format: Literal["png", "gif"] = "png"
+    frame_count: int | None = Field(default=None, ge=2, le=16)
+    frame_duration_ms: int | None = Field(default=None, ge=20, le=2000)
 
 
 class ResumePollRequest(BaseModel):
@@ -71,6 +75,9 @@ def create_router() -> APIRouter:
                 base_url=resolve_image_base_url(request),
                 batch_size=body.batch_size,
                 account_pool=body.account_pool,
+                output_format=body.output_format,
+                frame_count=body.frame_count,
+                frame_duration_ms=body.frame_duration_ms,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail={"error": str(exc)}) from exc

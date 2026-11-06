@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from typing import Any, Iterator
+from fastapi import HTTPException
+from utils.image_formats import generation_options
 
 from services.protocol.conversation import (
     ConversationRequest,
@@ -13,6 +15,10 @@ from utils.image_tokens import count_image_output_items_tokens, image_usage
 
 
 def handle(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, Any]]:
+    try:
+        output_options = generation_options(body)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail={"error": str(exc)}) from exc
     prompt = str(body.get("prompt") or "")
     model = str(body.get("model") or "gpt-image-2")
     n = int(body.get("n") or 1)
@@ -39,6 +45,7 @@ def handle(body: dict[str, Any]) -> dict[str, Any] | Iterator[dict[str, Any]]:
         progress_callback=progress_callback,
         cancel_event=cancel_event,
         source_type=account_pool,
+        **output_options,
     ))
     if body.get("stream"):
         return stream_image_chunks(outputs)

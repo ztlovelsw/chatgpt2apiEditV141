@@ -241,6 +241,7 @@ def image_output_items(prompt: str, data: list[dict[str, Any]], item_id: str | N
                 "type": "image_generation_call",
                 "status": "completed",
                 "result": b64_json,
+                "output_format": item.get("output_format", "png"),
                 "revised_prompt": str(item.get("revised_prompt") or prompt).strip() or prompt,
             })
     return output
@@ -311,7 +312,7 @@ def stream_text_response(backend, body: dict[str, Any], messages: list[dict[str,
         model=model,
         messages=messages,
         thinking_effort=thinking_effort,
-        source_type="default",
+        source_type=str(body.get("account_pool") or "default").strip().lower(),
     )
     for delta in stream_text_deltas(backend, request):
         full_text += delta
@@ -429,7 +430,7 @@ def response_events(body: dict[str, Any]) -> Iterator[dict[str, Any]]:
         key = cache_key(body, messages, stream=bool(body.get("stream")))
         yield from chat_completion_cache.get_or_compute_stream(
             key,
-            lambda: stream_text_response(text_backend("default"), body, messages),
+            lambda: stream_text_response(text_backend(account_pool), body, messages),
         )
         return
 
@@ -454,6 +455,9 @@ def response_events(body: dict[str, Any]) -> Iterator[dict[str, Any]]:
         response_format="b64_json",
         images=images,
         source_type=source_type,
+        output_format=str(tool.get("output_format") or body.get("output_format") or "png"),
+        frame_count=tool.get("frame_count", body.get("frame_count")),
+        frame_duration_ms=tool.get("frame_duration_ms", body.get("frame_duration_ms")),
     ))
     yield from stream_image_response(image_outputs, prompt, model, input_image_tokens, tool.get("size"), str(tool.get("quality") or "auto"))
 

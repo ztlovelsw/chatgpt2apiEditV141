@@ -786,6 +786,25 @@ class OpenAIBackendAPI:
         for event in events:
             yield event
 
+    def generate_gif(self, prompt: str, model: str, size: str | None, quality: str,
+                     frame_count: int, frame_duration_ms: int) -> list[dict[str, Any]]:
+        account = account_service.get_account(self.access_token) or {}
+        if not account_service._account_matches_source_type(account, "codex_images"):
+            raise RuntimeError("GIF generation requires an OAuth or Codex source account")
+        path = "/backend-api/codex/images/generations"
+        response = self.session.post(
+            self.base_url + path,
+            headers=self._headers(path, {"Content-Type": "application/json"}),
+            json={
+                "model": image_generation_model(model), "prompt": prompt, "n": 1,
+                "size": size or "auto", "quality": quality, "output_format": "gif",
+                "frame_count": frame_count, "frame_duration_ms": frame_duration_ms,
+            },
+            timeout=300,
+        )
+        ensure_ok(response, path)
+        return response.json().get("data") or []
+
     def iter_codex_image_response_events(
             self,
             prompt: str,

@@ -3,6 +3,7 @@
 import localforage from "localforage";
 
 import type { AccountPool, ImageModel } from "@/lib/api";
+import { normalizeImageAccountPool } from "@/lib/account-pools";
 
 export type ImageConversationMode = "generate" | "edit";
 
@@ -40,6 +41,7 @@ export type StoredImage = {
   b64_json?: string;
   url?: string;
   revised_prompt?: string;
+  mime_type?: string;
   error?: string;
   startTime?: number;
   elapsedSecs?: number;
@@ -61,6 +63,9 @@ export type ImageTurn = {
   ratio: string;
   tier: string;
   quality: string;
+  outputFormat?: "png" | "gif";
+  frameCount?: number;
+  frameDurationMs?: number;
   images: StoredImage[];
   createdAt: string;
   status: ImageTurnStatus;
@@ -207,7 +212,7 @@ function normalizeTurn(turn: ImageTurn & Record<string, unknown>): ImageTurn {
     id: String(turn.id || `${Date.now()}`),
     prompt: String(turn.prompt || ""),
     model: (turn.model as ImageModel) || "gpt-image-2",
-    accountPool: turn.accountPool === "gptfree" ? "gptfree" : "default",
+    accountPool: normalizeImageAccountPool(turn.accountPool),
     mode: turn.mode === "edit" ? "edit" : "generate",
     referenceImages: getLegacyReferenceImages(turn),
     count: Math.max(1, Number(turn.count || normalizedImages.length || 1)),
@@ -215,6 +220,9 @@ function normalizeTurn(turn: ImageTurn & Record<string, unknown>): ImageTurn {
     ratio: typeof turn.ratio === "string" && turn.ratio ? turn.ratio : "1:1",
     tier: typeof turn.tier === "string" && turn.tier ? turn.tier : "1k",
     quality: typeof turn.quality === "string" && turn.quality ? turn.quality : "auto",
+    outputFormat: turn.outputFormat === "gif" ? "gif" : "png",
+    frameCount: Number(turn.frameCount || 9),
+    frameDurationMs: Number(turn.frameDurationMs || 200),
     images: normalizedImages,
     createdAt: String(turn.createdAt || new Date().toISOString()),
     status:
@@ -238,7 +246,7 @@ function normalizeConversation(conversation: ImageConversation & Record<string, 
           id: String(conversation.id || `${Date.now()}`),
           prompt: String(conversation.prompt || ""),
           model: (conversation.model as ImageModel) || "gpt-image-2",
-          accountPool: conversation.accountPool === "gptfree" ? "gptfree" : "default",
+          accountPool: normalizeImageAccountPool(conversation.accountPool),
           mode: conversation.mode === "edit" ? "edit" : "generate",
           referenceImages: getLegacyReferenceImages(conversation),
           count: Number(conversation.count || 1),

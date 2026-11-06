@@ -28,6 +28,9 @@ from utils.helper import (
     split_image_model,
 )
 from utils.image_tokens import count_image_content_tokens
+from utils.image_formats import generation_options, image_metadata
+from utils.account_pools import POOL_PLAN_TYPES
+from utils.helper import UpstreamHTTPError
 from utils.log import logger
 
 
@@ -286,16 +289,19 @@ def format_image_result(
         if not b64_json:
             continue
         revised_prompt = str(item.get("revised_prompt") or prompt).strip() or prompt
+        metadata = image_metadata(base64.b64decode(b64_json))
         if response_format == "b64_json":
             data.append({
                 "b64_json": b64_json,
                 "url": save_image_bytes(base64.b64decode(b64_json), base_url),
                 "revised_prompt": revised_prompt,
+                **metadata,
             })
         else:
             data.append({
                 "url": save_image_bytes(base64.b64decode(b64_json), base_url),
                 "revised_prompt": revised_prompt,
+                **metadata,
             })
     result: dict[str, Any] = {"created": created or int(time.time()), "data": data}
     if message and not data:
@@ -319,6 +325,9 @@ class ConversationRequest:
     progress_callback: Any = None  # Callable[[str], None] | None
     cancel_event: Any = None  # threading.Event-like object used by background image tasks
     source_type: str | None = None
+    output_format: str = "png"
+    frame_count: int | None = None
+    frame_duration_ms: int | None = None
 
 
 @dataclass
@@ -1216,6 +1225,55 @@ def _codex_response_images(value: Any) -> list[str]:
     return []
 
 
+def stream_gif_image_outputs(backend: OpenAIBackendAPI, request: ConversationRequest,
+                             index: int = 1, total: int = 1) -> Iterator[ImageOutput]:
+    if not is_codex_image_model(request.model):
+        # ChatGPT creates a native GIF through its image conversation tool.
+        # The Codex direct-image endpoint has separate format permissions.
+        prompt = (
+            f"{request.prompt}\n\nCreate a native animated looping GIF. "
+            f"Use {request.frame_count or 9} animation frames at "
+            f"{request.frame_duration_ms or 200} milliseconds per frame. "
+            "Return the downloadable animated GIF in the chat."
+        )
+        web_request = replace(request, prompt=prompt)
+        for output in stream_image_outputs(backend, web_request, index, total):
+            if output.kind == "result":
+                output.data = [item for item in output.data if
+                               item.get("output_format") == "gif" and item.get("frame_count", 0) >= 2]
+                if not output.data:
+                    raise ImageGenerationError("官网未返回动画 GIF，请重试或检查所选模型", code="invalid_gif_output",
+                                               conversation_id=output.conversation_id)
+                yield output
+                return
+            yield output
+        return
+    try:
+        items = backend.generate_gif(request.prompt, request.model, request.size, request.quality,
+                                     request.frame_count or 9, request.frame_duration_ms or 200)
+    except UpstreamHTTPError as exc:
+        if "gif output is not enabled for this request" in str(exc.body).lower():
+            raise ImageGenerationError(
+                "当前 Codex 直连接口未开放 GIF 输出，请改用普通图片模型走官网链路。",
+                status_code=exc.status_code, error_type="permission_error", code="gif_not_enabled",
+            ) from exc
+        message = "Codex GIF 接口拒绝了当前请求" if exc.status_code == 403 else "Codex GIF 接口拒绝请求，请检查参数或使用官网模型"
+        raise ImageGenerationError(f"{message}（HTTP {exc.status_code}）", status_code=exc.status_code,
+                                   error_type="permission_error" if exc.status_code == 403 else "invalid_request_error",
+                                   code="gif_upstream_error") from exc
+    if not items:
+        raise ImageGenerationError("GIF upstream returned no image", code="invalid_gif_output")
+    for item in items:
+        try:
+            metadata = image_metadata(base64.b64decode(item.get("b64_json") or "", validate=True))
+        except Exception as exc:
+            raise ImageGenerationError("GIF upstream returned invalid data", code="invalid_gif_output") from exc
+        if metadata.get("output_format") != "gif" or metadata.get("frame_count", 0) < 2:
+            raise ImageGenerationError("上游未返回动画 GIF，请检查模型与 GIF 权限", code="invalid_gif_output")
+    data = format_image_result(items, request.prompt, request.response_format, request.base_url)["data"]
+    yield ImageOutput(kind="result", model=request.model, index=index, total=total, data=data)
+
+
 def stream_codex_image_outputs(
         backend: OpenAIBackendAPI,
         request: ConversationRequest,
@@ -1282,13 +1340,15 @@ def _generate_single_image(
                 request.progress_callback("getting_account")
             plan_type, _ = split_image_model(request.model)
             codex_model = is_codex_image_model(request.model)
-            source_type = request.source_type or (
-                "gptfree" if is_gptfree_model(request.model) else ("codex" if codex_model else "default")
+            source_type = (
+                ("codex_images" if request.output_format == "gif" else "codex") if codex_model
+                else request.source_type or ("gptfree" if is_gptfree_model(request.model) else "default")
             )
             token = account_service.get_available_access_token(
                 plan_type=plan_type,
                 source_type=source_type,
-                plan_types=("plus", "team", "pro") if codex_model and not plan_type else None,
+                plan_types=(POOL_PLAN_TYPES[request.source_type] if codex_model and request.source_type in POOL_PLAN_TYPES
+                            else ("plus", "team", "pro") if codex_model and not plan_type else None),
                 excluded_tokens=attempted_tokens,
             )
         except RuntimeError as exc:
@@ -1347,7 +1407,8 @@ def _generate_single_image(
         try:
             backend = OpenAIBackendAPI(access_token=token)
             backend.progress_callback = progress_callback
-            stream_fn = stream_codex_image_outputs if is_codex_image_model(request.model) else stream_image_outputs
+            stream_fn = (stream_gif_image_outputs if request.output_format == "gif" else
+                         stream_codex_image_outputs if is_codex_image_model(request.model) else stream_image_outputs)
             outputs: list[ImageOutput] = []
             for output in stream_fn(backend, attempt_request, index, total):
                 output.model = request.model
@@ -1431,6 +1492,9 @@ def _generate_single_image(
                 conversation_id=getattr(exc, "conversation_id", ""),
             ) from exc
         except ImageGenerationError as exc:
+            if exc.code == "gif_not_enabled":
+                release_submission_slot()
+                raise
             mark_result(False, exc)
             if account_email and not getattr(exc, "account_email", ""):
                 exc.account_email = account_email
@@ -1534,6 +1598,18 @@ def stream_image_outputs_with_pool(request: ConversationRequest) -> Iterator[Ima
     """并行生成多张图片，每张图片使用独立线程和账号，互不阻塞。"""
     if not is_supported_image_model(request.model):
         raise ImageGenerationError("unsupported image model; discover available models with GET /v1/models")
+    try:
+        generation_options({"output_format": request.output_format, "frame_count": request.frame_count,
+                            "frame_duration_ms": request.frame_duration_ms, "images": request.images,
+                            "size": request.size, "account_pool": request.source_type})
+    except ValueError as exc:
+        raise ImageGenerationError(str(exc), status_code=400, error_type="invalid_request_error", code="invalid_image_options") from exc
+    if request.output_format == "gif" and is_codex_image_model(request.model) and not any(
+        account_service._account_matches_source_type(item, "codex_images") and item.get("status") not in {"禁用", "异常"}
+        for item in account_service.list_accounts()
+    ):
+        raise ImageGenerationError("GIF 生成需要具备 GIF 权限的 OAuth/Codex 账号，当前没有可用账号",
+                                   status_code=400, error_type="invalid_request_error", code="gif_account_required")
 
     if request.n <= 1:
         # 单张图片，直接执行（无需线程池开销）

@@ -99,6 +99,13 @@ environment:
 
 ## 功能
 
+### 生图号池分档
+
+- 按订阅档位划分 GPT Free、Plus、Pro 三档。账号页面分别展示真实剩余额度和账号数；登录来源不再决定普通账号的订阅分组。
+- 自动生图优先使用可用 Free 账号，其次 Plus，最后 Pro；额度为 0、限流、禁用、异常或并发已满的账号不参与当次调度。手动指定档位时只使用该档位。
+- 生图及编辑接口的 `account_pool` 支持 `default`（自动）、`free`、`plus`、`pro`。旧 `gptfree` 来源参数保留兼容；画图页旧的 gptFree 选择会迁移到按订阅划分的 Free 档。
+- Free 的剩余额度使用账号上游返回值，正常显示为 20 的账号不会被来源筛选误显示为 0；实际用尽的额度保留为 0。
+
 ### 自动发现模型
 
 - `GET /v1/models` 合并当前启用账号的上游模型列表，保留模型名称、隐藏标记和能力信息，不再插入固定的“最新聊天模型”。新增同协议模型无需更新代码。
@@ -108,6 +115,11 @@ environment:
 - 聊天、画图和接口说明页每 5 分钟更新模型，切回窗口时也会检查更新。原有的自定义模型输入仍可使用。
 
 ### API 兼容能力
+
+- GIF 文生图可指定 `output_format: "gif"`、`frame_count`（2–16，默认 9）和 `frame_duration_ms`（20–2000，默认 200）。尺寸使用 `auto` 或长宽为 16 倍数的 `WIDTHxHEIGHT`。
+- 普通图片模型通过 ChatGPT 官网图片对话链路生成 GIF，支持 Web/OAuth 账号；Plus 账号已实测成功。帧数、帧间隔通过提示词传递，接口返回实际动画元数据，并过滤同时返回的静态预览图。
+- `codex-` 前缀模型仍使用 `/backend-api/codex/images/generations` 独立接口；该接口可能拒绝 GIF，但不能据此判断账号的官网 GIF 功能不可用。
+- GIF 不支持图片编辑或 Images API 的 `stream=true`。网页图像设置可选择 GIF、设置帧数和帧间隔；生成记录保留参数，原始动画文件以 `.gif` 保存、预览和下载。
 
 - 兼容 `POST /v1/images/generations` 图片生成接口
 - 兼容 `POST /v1/images/edits` 图片编辑接口

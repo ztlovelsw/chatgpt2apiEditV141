@@ -15,10 +15,11 @@ from fastapi import HTTPException
 from PIL import Image
 
 from services.config import DATA_DIR, config
+from utils.image_formats import image_metadata
 
 IMAGE_INDEX_FILE = DATA_DIR / "image_index.json"
 IMAGE_INDEX_LOCK = Lock()
-IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 
 
 class ImageStorageError(RuntimeError):
@@ -131,6 +132,8 @@ class WebDAVClient:
                 raise ImageStorageError(f"WebDAV MKCOL failed: HTTP {response.status_code}")
 
     def put(self, rel: str, payload: bytes, content_type: str = "image/png") -> str:
+        if payload.startswith((b"GIF87a", b"GIF89a")):
+            content_type = "image/gif"
         self.ensure_dirs(rel)
         url = self.remote_url(rel)
         self._request("PUT", url, data=payload, headers={"Content-Type": content_type})
@@ -198,7 +201,8 @@ class ImageStorageService:
 
     def make_relative_path(self, image_data: bytes) -> str:
         file_hash = hashlib.md5(image_data).hexdigest()
-        filename = f"{int(time.time())}_{file_hash}.png"
+        extension = image_metadata(image_data)["output_format"]
+        filename = f"{int(time.time())}_{file_hash}.{extension}"
         relative_dir = Path(time.strftime("%Y"), time.strftime("%m"), time.strftime("%d"))
         return f"{relative_dir.as_posix()}/{filename}"
 
@@ -234,6 +238,7 @@ class ImageStorageService:
             "local": stored_local,
             "webdav": stored_webdav,
             "remote_url": remote_url,
+            **image_metadata(image_data),
         }
         if dimensions:
             item["width"], item["height"] = dimensions

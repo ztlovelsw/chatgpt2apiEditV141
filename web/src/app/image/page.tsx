@@ -1,4 +1,6 @@
 "use client";
+import { imageMimeType, imageExtension } from "@/lib/image-media";
+import { normalizeImageAccountPool, poolQuota } from "@/lib/account-pools";
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { ArrowDown, History, ImageIcon, LoaderCircle, MessageSquareText, Plus, Trash2 } from "lucide-react";
@@ -140,12 +142,7 @@ function formatConversationTime(value: string) {
 }
 
 function formatAvailableQuota(accounts: Account[], accountPool: AccountPool) {
-  const availableAccounts = accounts.filter((account) => {
-    const sourceType = String(account.source_type || "web").trim().toLowerCase();
-    const matchesPool = accountPool === "gptfree" ? sourceType === "gptfree" : sourceType !== "gptfree";
-    return matchesPool && account.status !== "禁用";
-  });
-  return String(availableAccounts.reduce((sum, account) => sum + Math.max(0, account.quota), 0));
+  return poolQuota(accounts, accountPool);
 }
 
 function createId() {
@@ -258,8 +255,8 @@ function buildReferenceImageFromResult(image: StoredImage, fileName: string): St
 
   return {
     name: fileName,
-    type: "image/png",
-    dataUrl: `data:image/png;base64,${image.b64_json}`,
+    type: imageMimeType(image),
+    dataUrl: `data:${imageMimeType(image)};base64,${image.b64_json}`,
   };
 }
 
@@ -319,6 +316,7 @@ function taskDataToStoredImage(image: StoredImage, task: ImageTask): StoredImage
       b64_json: first.b64_json,
       url: first.url,
       revised_prompt: first.revised_prompt,
+      mime_type: first.mime_type,
       error: undefined,
       durationMs: task.duration_ms,
     };
@@ -411,6 +409,7 @@ function taskDataToStoredImages(image: StoredImage, task: ImageTask): StoredImag
     b64_json: item.b64_json,
     url: item.url,
     revised_prompt: item.revised_prompt,
+    mime_type: item.mime_type,
     error: undefined,
     durationMs: task.duration_ms,
   }));
@@ -620,6 +619,9 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
   const [imageWidth, setImageWidth] = useState("1024");
   const [imageHeight, setImageHeight] = useState("1024");
   const [imageQuality, setImageQuality] = useState("auto");
+  const [imageOutputFormat, setImageOutputFormat] = useState<"png" | "gif">("png");
+  const [imageFrameCount, setImageFrameCount] = useState(9);
+  const [imageFrameDurationMs, setImageFrameDurationMs] = useState(200);
   const [imageModel, setImageModel] = useState<ImageModel>("gpt-image-2");
   const [imageAccountPool, setImageAccountPool] = useState<AccountPool>("default");
   const [imageModels, setImageModels] = useState<ImageModel[]>(["gpt-image-2"]);
@@ -865,7 +867,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
       setImageHeight("1024");
       setImageQuality(storedQuality || "auto");
       setImageCount(storedCount ? clampImageCount(storedCount) : "1");
-      setImageAccountPool(storedAccountPool === "gptfree" ? "gptfree" : "default");
+      setImageAccountPool(normalizeImageAccountPool(storedAccountPool));
 
       const items = await listImageConversations();
       const normalizedItems = await recoverConversationHistory(items);
@@ -1415,7 +1417,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     try {
       const stamp = new Date();
       const name = buildLibraryTitle(prompt, `生成素材 ${stamp.toLocaleString("zh-CN", { hour12: false })}`);
-      const filename = `generated-${stamp.getTime()}-${index + 1}.png`;
+      const filename = `generated-${stamp.getTime()}-${index + 1}.${imageExtension(image)}`;
       const notes = [
         prompt.trim() ? `原始提示词：${prompt.trim()}` : "",
         image.revised_prompt?.trim() && image.revised_prompt.trim() !== prompt.trim()
@@ -1430,7 +1432,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
             type: "生成结果",
             note,
             b64_json: image.b64_json,
-            mime_type: "image/png",
+            mime_type: imageMimeType(image),
             filename,
           })
         : image.url
@@ -1471,6 +1473,9 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     setImageWidth(parsedSize.width);
     setImageHeight(parsedSize.height);
     setImageQuality(turn.quality);
+    setImageOutputFormat(turn.outputFormat || "png");
+    setImageFrameCount(turn.frameCount || 9);
+    setImageFrameDurationMs(turn.frameDurationMs || 200);
     setImageModel(turn.model);
     setImageAccountPool(turn.accountPool);
     setReferenceImages(turn.referenceImages);
@@ -1598,6 +1603,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
                   activeTurn.quality,
                   activeTurn.images.length,
                   activeTurn.accountPool,
+                  activeTurn,
                 );
           }),
         );
@@ -1666,6 +1672,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
                         activeTurn.quality,
                         activeTurn.images.length,
                         activeTurn.accountPool,
+                        activeTurn,
                       ),
                 ),
               );
@@ -1746,6 +1753,9 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
         ratio: sourceTurn.ratio,
         tier: sourceTurn.tier,
         quality: sourceTurn.quality,
+        outputFormat: sourceTurn.outputFormat,
+        frameCount: sourceTurn.frameCount,
+        frameDurationMs: sourceTurn.frameDurationMs,
         images: createLoadingImages(nextTurnId, count),
         createdAt: now,
         status: "queued",
@@ -2010,6 +2020,15 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     const combinedReferenceImageFiles = [...referenceImageFiles, ...materialReferenceFiles];
     const combinedReferenceImages = [...referenceImages, ...materialReferenceImages];
     const effectiveImageMode: ImageConversationMode = combinedReferenceImageFiles.length > 0 ? "edit" : "generate";
+    if (imageOutputFormat === "gif" && (effectiveImageMode === "edit" || imageAccountPool === "gptfree")) {
+      toast.error("GIF 仅支持文生图，请移除参考图并使用默认号池");
+      return;
+    }
+    if (imageOutputFormat === "gif" && (!Number.isInteger(imageFrameCount) || imageFrameCount < 2 || imageFrameCount > 16 ||
+        !Number.isInteger(imageFrameDurationMs) || imageFrameDurationMs < 20 || imageFrameDurationMs > 2000)) {
+      toast.error("GIF 帧数应为 2–16，帧间隔应为 20–2000 毫秒");
+      return;
+    }
 
     const targetConversation = selectedConversationId
       ? conversationsRef.current.find((conversation) => conversation.id === selectedConversationId) ?? null
@@ -2026,10 +2045,13 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
       mode: effectiveImageMode,
       referenceImages: effectiveImageMode === "edit" ? combinedReferenceImages : [],
       count: parsedCount,
-      size: imageSize,
+      size: imageOutputFormat === "gif" && imageRatio === "auto" ? "auto" : imageSize,
       ratio: imageRatio,
       tier: imageTier,
       quality: imageQuality,
+      outputFormat: imageOutputFormat,
+      frameCount: imageOutputFormat === "gif" ? imageFrameCount : undefined,
+      frameDurationMs: imageOutputFormat === "gif" ? imageFrameDurationMs : undefined,
       images: createLoadingImages(turnId, parsedCount),
       createdAt: now,
       status: "queued",
@@ -2198,6 +2220,18 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
             imageWidth={imageWidth}
             imageHeight={imageHeight}
             imageQuality={imageQuality}
+            outputFormat={imageOutputFormat}
+            frameCount={imageFrameCount}
+            frameDurationMs={imageFrameDurationMs}
+            onOutputFormatChange={(format) => {
+              setImageOutputFormat(format);
+              if (format === "gif") {
+                setImageRatio("auto");
+                setImageTier("auto");
+              }
+            }}
+            onFrameCountChange={setImageFrameCount}
+            onFrameDurationMsChange={setImageFrameDurationMs}
             imageModel={imageModel}
             imageModels={imageModels}
             accountPool={imageAccountPool}

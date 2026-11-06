@@ -14,7 +14,8 @@ import {
   streamChatCompletion,
   type ImageChatConfig,
 } from "@/app/image/lib/chat-completions";
-import type { ImageModel } from "@/lib/api";
+import type { AccountPool, ImageModel } from "@/lib/api";
+import { IMAGE_POOL_OPTIONS } from "@/lib/account-pools";
 import type { MaterialLibraryItem, PromptLibraryItem } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import type { StoredReferenceImage } from "@/store/image-conversations";
@@ -27,9 +28,15 @@ type ImageComposerProps = {
   imageWidth: string;
   imageHeight: string;
   imageQuality: string;
+  outputFormat: "png" | "gif";
+  frameCount: number;
+  frameDurationMs: number;
+  onOutputFormatChange: (value: "png" | "gif") => void;
+  onFrameCountChange: (value: number) => void;
+  onFrameDurationMsChange: (value: number) => void;
   imageModel: ImageModel;
   imageModels: ImageModel[];
-  accountPool: "default" | "gptfree";
+  accountPool: AccountPool;
   chatConfig: ImageChatConfig;
   promptLibraryItems: PromptLibraryItem[];
   materialLibraryItems: MaterialLibraryItem[];
@@ -48,7 +55,7 @@ type ImageComposerProps = {
   onImageHeightChange: (value: string) => void;
   onImageQualityChange: (value: string) => void;
   onImageModelChange: (value: ImageModel) => void;
-  onAccountPoolChange: (value: "default" | "gptfree") => void;
+  onAccountPoolChange: (value: AccountPool) => void;
   onTogglePromptSelection: (id: string) => void;
   onToggleMaterialSelection: (id: string) => void;
   onSubmit: () => void | Promise<void>;
@@ -109,6 +116,12 @@ export function ImageComposer({
   imageWidth,
   imageHeight,
   imageQuality,
+  outputFormat,
+  frameCount,
+  frameDurationMs,
+  onOutputFormatChange,
+  onFrameCountChange,
+  onFrameDurationMsChange,
   imageModel,
   imageModels,
   accountPool,
@@ -156,7 +169,7 @@ export function ImageComposer({
   );
   const qualityLabel = qualityOptions.find((option) => option.value === imageQuality)?.label || "自动";
   const ratioLabel = imageRatio === "auto" ? "auto" : `${imageRatio}(${imageTier})`;
-  const poolLabel = accountPool === "gptfree" ? "gptFree号池" : "默认号池";
+  const poolLabel = IMAGE_POOL_OPTIONS.find((option) => option.value === accountPool)?.label || "自动（Free 优先）";
   const imageSizeLabel = `${poolLabel} · ${qualityLabel} · ${ratioLabel} · ${imageCount || 1} 张`;
   const selectedModelLabel = modelOptions.find((option) => option.value === imageModel)?.label || imageModel;
   const isCodexModel = imageModel.toLowerCase().includes("codex");
@@ -645,18 +658,34 @@ export function ImageComposer({
                         }}
                       >
                         <h3 className="mb-3 text-base font-semibold text-stone-950">图像设置</h3>
+                        <div className="mb-3 space-y-2">
+                          <div className="text-sm font-medium text-stone-900">输出格式</div>
+                          <Select value={outputFormat} onValueChange={(value) => onOutputFormatChange(value as "png" | "gif")}>
+                            <SelectTrigger><SelectValue /></SelectTrigger>
+                            <SelectContent className="z-[120]">
+                              <SelectItem value="png">PNG 静态图片</SelectItem>
+                              <SelectItem value="gif">GIF 动画</SelectItem>
+                            </SelectContent>
+                          </Select>
+                          {outputFormat === "gif" && <>
+                            <div className="grid grid-cols-2 gap-2">
+                              <label className="text-xs">帧数（2–16）<Input type="number" min={2} max={16} value={frameCount} onChange={(event) => onFrameCountChange(Number(event.target.value))} /></label>
+                              <label className="text-xs">帧间隔（毫秒）<Input type="number" min={20} max={2000} step={10} value={frameDurationMs} onChange={(event) => onFrameDurationMsChange(Number(event.target.value))} /></label>
+                            </div>
+                            <p className="text-xs text-stone-500">选择普通图片模型使用官网 GIF 生成。帧数和间隔通过提示词传递，最终动画以返回文件为准；Codex 前缀模型使用独立接口。</p>
+                          </>}
+                        </div>
                         <div className="mb-3">
                           <div className="mb-2 text-sm font-medium text-stone-900">账号池</div>
                           <Select
                             value={accountPool}
-                            onValueChange={(value) => onAccountPoolChange(value as "default" | "gptfree")}
+                            onValueChange={(value) => onAccountPoolChange(value as AccountPool)}
                           >
                             <SelectTrigger className="h-10 rounded-xl border-stone-200 bg-white text-sm shadow-none">
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent className="z-[120]">
-                              <SelectItem value="default">默认号池</SelectItem>
-                              <SelectItem value="gptfree">gptFree号池</SelectItem>
+                              {IMAGE_POOL_OPTIONS.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}
                             </SelectContent>
                           </Select>
                         </div>

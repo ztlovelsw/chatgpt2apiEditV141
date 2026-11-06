@@ -103,6 +103,9 @@ const docs: ApiDoc[] = [
     input: [
       ["prompt", "string", "图片生成提示词。"],
       ["model", "string", "可选，默认 gpt-image-2。"],
+      ["output_format", "png | gif", "文生图输出格式，默认 png。普通图片模型通过官网生成 GIF；Codex 前缀模型使用独立接口。Images API 不支持 GIF stream=true。"],
+      ["frame_count", "integer", "仅 GIF：2–16 帧，默认 9。"],
+      ["frame_duration_ms", "integer", "仅 GIF：每帧 20–2000 毫秒，默认 200。"],
       ["n", "number", "可选，生成数量，当前限制 1-4。"],
       ["size", "string", "可选，图片尺寸。"],
       ["quality", "string", "可选，默认 auto。"],

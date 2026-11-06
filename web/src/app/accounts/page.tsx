@@ -62,6 +62,7 @@ import {
 import { useAuthGuard } from "@/lib/use-auth-guard";
 import { cn } from "@/lib/utils";
 import { copyTextToClipboard } from "@/lib/clipboard";
+import { accountImagePool, IMAGE_POOL_OPTIONS, poolAccounts, poolQuota } from "@/lib/account-pools";
 
 import { AccountImportDialog } from "./components/account-import-dialog";
 import { AccountDiagnosticsPanel } from "./components/account-diagnostics-panel";
@@ -221,6 +222,7 @@ function AccountsPageContent() {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [query, setQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState("all");
+  const [poolFilter, setPoolFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState<AccountStatus | "all">("all");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState("10");
@@ -310,9 +312,10 @@ function AccountsPageContent() {
         normalizedQuery.length === 0 || (account.email ?? "").toLowerCase().includes(normalizedQuery);
       const typeMatched = typeFilter === "all" || displayAccountType(account) === typeFilter;
       const statusMatched = statusFilter === "all" || account.status === statusFilter;
-      return searchMatched && typeMatched && statusMatched;
+      const poolMatched = poolFilter === "all" || (account.source_type !== "gptfree" && accountImagePool(account) === poolFilter);
+      return searchMatched && typeMatched && statusMatched && poolMatched;
     });
-  }, [accounts, query, statusFilter, typeFilter]);
+  }, [accounts, query, statusFilter, typeFilter, poolFilter]);
 
   const pageCount = Math.max(1, Math.ceil(filteredAccounts.length / Number(pageSize)));
   const safePage = Math.min(page, pageCount);
@@ -947,6 +950,22 @@ function AccountsPageContent() {
               </Card>
             );
           })}
+        </div>
+        <div className="space-y-2">
+          <div className="flex items-center justify-between text-sm text-stone-600">
+            <span>生图号池 · 自动顺序 Free → Plus → Pro</span>
+            <button type="button" className="text-stone-500 hover:text-stone-900" onClick={() => { setPoolFilter("all"); setPage(1); }}>显示全部</button>
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            {IMAGE_POOL_OPTIONS.filter((option) => option.value !== "default").map((option) => (
+              <button key={option.value} type="button" onClick={() => { setPoolFilter(option.value); setTypeFilter("all"); setPage(1); }}
+                className={cn("rounded-2xl border bg-white p-4 text-left transition", poolFilter === option.value ? "border-stone-700 ring-1 ring-stone-700" : "border-stone-200")}>
+                <div className="text-sm font-medium text-stone-700">{option.label}</div>
+                <div className="mt-2 text-2xl font-semibold tabular-nums">{poolQuota(accounts, option.value)}</div>
+                <div className="mt-1 text-xs text-stone-500">剩余生图额度 · {poolAccounts(accounts, option.value).length} 个账号</div>
+              </button>
+            ))}
+          </div>
         </div>
         <Card className="rounded-2xl border-white/80 bg-white/90 shadow-sm">
           <CardContent className="p-4">

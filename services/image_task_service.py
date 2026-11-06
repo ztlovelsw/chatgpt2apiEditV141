@@ -13,6 +13,7 @@ from services.config import DATA_DIR, config
 from services.content_filter import request_text
 from services.log_service import LOG_TYPE_CALL, log_service
 from services.protocol import openai_v1_image_edit, openai_v1_image_generations
+from utils.image_formats import generation_options
 
 TASK_STATUS_QUEUED = "queued"
 TASK_STATUS_RUNNING = "running"
@@ -89,6 +90,9 @@ def _public_task(task: dict[str, Any]) -> dict[str, Any]:
         "model": task.get("model"),
         "size": task.get("size"),
         "quality": task.get("quality"),
+        "output_format": task.get("output_format", "png"),
+        "frame_count": task.get("frame_count"),
+        "frame_duration_ms": task.get("frame_duration_ms"),
         "created_at": task.get("created_at"),
         "updated_at": task.get("updated_at"),
     }
@@ -153,6 +157,9 @@ class ImageTaskService:
         base_url: str = "",
         batch_size: int = 1,
         account_pool: str = "default",
+        output_format: str = "png",
+        frame_count: int | None = None,
+        frame_duration_ms: int | None = None,
     ) -> dict[str, Any]:
         payload = {
             "prompt": prompt,
@@ -164,6 +171,9 @@ class ImageTaskService:
             "base_url": base_url,
             "_batch_size": max(1, int(batch_size or 1)),
             "account_pool": _clean(account_pool, "default"),
+            **generation_options({"output_format": output_format, "frame_count": frame_count,
+                                  "frame_duration_ms": frame_duration_ms, "size": size,
+                                  "account_pool": account_pool}),
         }
         return self._submit(identity, client_task_id=client_task_id, mode="generate", payload=payload)
 
@@ -280,6 +290,9 @@ class ImageTaskService:
                 "model": _clean(payload.get("model"), "gpt-image-2"),
                 "size": _clean(payload.get("size")),
                 "quality": _clean(payload.get("quality"), "auto"),
+                "output_format": payload.get("output_format", "png"),
+                "frame_count": payload.get("frame_count"),
+                "frame_duration_ms": payload.get("frame_duration_ms"),
                 "created_at": now,
                 "updated_at": now,
                 "created_ts": time.time(),
@@ -575,6 +588,9 @@ class ImageTaskService:
                 "model": _clean(item.get("model"), "gpt-image-2"),
                 "size": _clean(item.get("size")),
                 "quality": _clean(item.get("quality"), "auto"),
+                "output_format": item.get("output_format", "png"),
+                "frame_count": item.get("frame_count"),
+                "frame_duration_ms": item.get("frame_duration_ms"),
                 "created_at": _clean(item.get("created_at"), _now_iso()),
                 "updated_at": _clean(item.get("updated_at"), _clean(item.get("created_at"), _now_iso())),
                 "created_ts": item.get("created_ts"),

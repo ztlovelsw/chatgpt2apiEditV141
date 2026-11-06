@@ -5,6 +5,8 @@ import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { ChevronLeft, ChevronRight, Download, X } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import { imageExtension } from "@/lib/image-media";
+import { toast } from "sonner";
 
 type LightboxImage = {
   id: string;
@@ -182,12 +184,21 @@ export function ImageLightbox({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [open, goPrev, goNext]);
 
-  const handleDownload = useCallback(() => {
+  const handleDownload = useCallback(async () => {
     if (!current) return;
-    const link = document.createElement("a");
-    link.href = current.src;
-    link.download = `image-${current.id}.png`;
-    link.click();
+    try {
+      const response = await fetch(current.src);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `image-${current.id}.${imageExtension({ mime_type: blob.type, url: current.src })}`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      toast.error("下载失败，请重试");
+    }
   }, [current]);
 
   const toggleZoom = useCallback(() => {

@@ -6,6 +6,7 @@ from fastapi import APIRouter, Header, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field
+from utils.account_pools import AccountPool
 
 from api.image_inputs import parse_image_edit_request, read_image_sources
 from api.support import require_identity, resolve_image_base_url
@@ -32,7 +33,10 @@ class ImageGenerationRequest(BaseModel):
     response_format: str = "b64_json"
     history_disabled: bool = True
     stream: bool | None = None
-    account_pool: Literal["default", "gptfree"] = "default"
+    account_pool: AccountPool = "default"
+    output_format: Literal["png", "gif"] = "png"
+    frame_count: int | None = Field(default=None, ge=2, le=16)
+    frame_duration_ms: int | None = Field(default=None, ge=20, le=2000)
 
 
 class ChatCompletionRequest(BaseModel):
@@ -43,7 +47,7 @@ class ChatCompletionRequest(BaseModel):
     stream: bool | None = None
     modalities: list[str] | None = None
     messages: list[dict[str, object]] | None = None
-    account_pool: Literal["default", "gptfree"] = "default"
+    account_pool: AccountPool = "default"
 
 
 class ResponseCreateRequest(BaseModel):
@@ -53,7 +57,7 @@ class ResponseCreateRequest(BaseModel):
     tools: list[dict[str, object]] | None = None
     tool_choice: object | None = None
     stream: bool | None = None
-    account_pool: Literal["default", "gptfree"] = "default"
+    account_pool: AccountPool = "default"
 
 
 class AnthropicMessageRequest(BaseModel):

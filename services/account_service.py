@@ -1,4 +1,5 @@
 from __future__ import annotations
+from utils.account_pools import image_pool
 
 import base64
 import json
@@ -171,6 +172,10 @@ class AccountService:
             return True
         normalized_source = cls._normalize_source_type(source_type)
         normalized_account = cls._normalize_source_type(account.get("source_type"))
+        if normalized_source in {"free", "plus", "pro"}:
+            return image_pool(account) == normalized_source and normalized_account != "gptfree"
+        if normalized_source == "codex_images":
+            return normalized_account in {"codex", "oauth_login"}
         if normalized_source == "default":
             return normalized_account != "gptfree"
         return normalized_account == normalized_source
@@ -270,6 +275,7 @@ class AccountService:
             normalized["export_type"] = "codex"
             normalized.pop("type", None)
         normalized["type"] = normalized.get("type") or "free"
+        normalized["image_pool"] = image_pool(normalized)
         normalized["status"] = normalized.get("status") or "正常"
         normalized["quota"] = max(0, int(normalized.get("quota") if normalized.get("quota") is not None else 0))
         normalized["image_quota_unknown"] = bool(normalized.get("image_quota_unknown"))
@@ -1173,7 +1179,11 @@ class AccountService:
             for token in self._list_ready_candidate_tokens(excluded_tokens, plan_type, source_type, plan_types)
             if int(self._image_inflight.get(token, 0)) < max_concurrency
         ]
-        return sorted(tokens, key=self._image_candidate_score, reverse=True)
+        # Prefer Free, then Plus, then Pro; balance healthy accounts within a tier.
+        return sorted(tokens, key=lambda token: (
+            {"free": 0, "plus": 1, "pro": 2}[image_pool(self._accounts[token])],
+            -self._image_candidate_score(token)[0], token,
+        ))
 
     def _acquire_next_candidate_token(
             self,

@@ -5,6 +5,7 @@ import { BookmarkPlus, Clock3, Download, EyeOff, FolderPlus, LoaderCircle, Rotat
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { imageMimeType, imageExtension } from "@/lib/image-media";
 import type { ImageConversation, ImageTurnStatus, StoredImage, StoredReferenceImage } from "@/store/image-conversations";
 
 export type ImageLightboxItem = {
@@ -41,7 +42,7 @@ function getStoredImageSrc(image: StoredImage) {
       const binary = atob(image.b64_json);
       const bytes = new Uint8Array(binary.length);
       for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-      const blob = new Blob([bytes], { type: "image/png" });
+      const blob = new Blob([bytes], { type: imageMimeType(image) });
       url = URL.createObjectURL(blob);
       b64BlobUrlCache.set(image.b64_json, url);
     }
@@ -57,7 +58,7 @@ async function downloadStoredImage(image: StoredImage, index: number) {
       const binary = atob(image.b64_json);
       const bytes = new Uint8Array(binary.length);
       for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-      blob = new Blob([bytes], { type: "image/png" });
+      blob = new Blob([bytes], { type: imageMimeType(image) });
     } else if (image.url) {
       // 确保 URL 是绝对路径
       const url = image.url.startsWith("http") ? image.url : `${window.location.origin}${image.url}`;
@@ -80,7 +81,7 @@ async function downloadStoredImage(image: StoredImage, index: number) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `image-${index + 1}.png`;
+  a.download = `image-${index + 1}.${imageExtension(image)}`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);

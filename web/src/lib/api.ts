@@ -3,7 +3,7 @@ import { httpRequest, request } from "@/lib/request";
 export type AccountType = string;
 export type AccountStatus = "正常" | "限流" | "异常" | "禁用";
 export type ImageModel = string;
-export type AccountPool = "default" | "gptfree";
+export type AccountPool = "default" | "free" | "plus" | "pro" | "gptfree";
 export type AuthRole = "admin" | "user";
 export type ImageStorageMode = "local" | "webdav" | "both";
 
@@ -18,6 +18,7 @@ export type ImageStorageSettings = {
 };
 
 export type Account = {
+  image_pool?: "free" | "plus" | "pro";
   access_token: string;
   type: AccountType;
   source_type?: string | null;
@@ -351,7 +352,7 @@ export type SystemLog = {
 
 export type ImageResponse = {
   created: number;
-  data: Array<{ b64_json?: string; url?: string; revised_prompt?: string }>;
+  data: Array<{ b64_json?: string; url?: string; revised_prompt?: string; mime_type?: string; output_format?: string }>;
 };
 
 export type ImageTask = {
@@ -364,7 +365,7 @@ export type ImageTask = {
   created_at: string;
   updated_at: string;
   conversation_id?: string;
-  data?: Array<{ b64_json?: string; url?: string; revised_prompt?: string }>;
+  data?: Array<{ b64_json?: string; url?: string; revised_prompt?: string; mime_type?: string; output_format?: string }>;
   error?: string;
   progress?: string;
   elapsed_secs?: number;
@@ -624,7 +625,7 @@ export async function editImage(files: File | File[], prompt: string, model?: Im
   );
 }
 
-export async function createImageGenerationTask(clientTaskId: string, prompt: string, model?: ImageModel, size?: string, quality = "auto", batchSize = 1, accountPool: AccountPool = "default") {
+export async function createImageGenerationTask(clientTaskId: string, prompt: string, model?: ImageModel, size?: string, quality = "auto", batchSize = 1, accountPool: AccountPool = "default", output: { outputFormat?: "png" | "gif"; frameCount?: number; frameDurationMs?: number } = {}) {
   return httpRequest<ImageTask>("/api/image-tasks/generations", {
     method: "POST",
     body: {
@@ -635,6 +636,8 @@ export async function createImageGenerationTask(clientTaskId: string, prompt: st
       quality,
       batch_size: batchSize,
       account_pool: accountPool,
+      output_format: output.outputFormat || "png",
+      ...(output.outputFormat === "gif" ? { frame_count: output.frameCount || 9, frame_duration_ms: output.frameDurationMs || 200 } : {}),
     },
   });
 }
