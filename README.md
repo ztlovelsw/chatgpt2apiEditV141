@@ -1,7 +1,7 @@
 <h1 align="center">ChatGPT2API</h1>
 
 
-<p align="center">ChatGPT2API 主要是对 ChatGPT 官网相关能力进行逆向整理与封装，提供面向 ChatGPT 图片生成、图片编辑、多图组图编辑场景的 OpenAI 兼容图片 API / 代理，并集成在线画图、号池管理、多种账号导入方式与 Docker 自托管部署能力。</p>
+<p align="center">ChatGPT2API 主要是对 ChatGPT 官网相关能力进行逆向整理与封装，提供面向 ChatGPT 图片生成、图片编辑、参考图生成 GIF 与多图组图编辑场景的 OpenAI 兼容 API / 代理，并集成在线画图、号池管理、多种账号导入方式与 Docker 自托管部署能力。</p>
 
 > [!WARNING]
 > 免责声明：
@@ -20,7 +20,7 @@
 ### Docker 运行
 
 ```bash
-git clone git@github.com:basketikun/chatgpt2api.git
+git clone https://github.com/basketikun/chatgpt2api.git
 cd chatgpt2api
 docker compose up -d
 ```
@@ -57,7 +57,7 @@ docker compose -f docker-compose.warp.yml up -d --build
 启动后端：
 
 ```bash
-git clone git@github.com:basketikun/chatgpt2api.git
+git clone https://github.com/basketikun/chatgpt2api.git
 cd chatgpt2api
 uv sync
 uv run main.py
@@ -74,10 +74,8 @@ bun run dev
 后续更新新版本：
 
 ```bash
-docker pull ghcr.io/basketikun/chatgpt2api:latest
-docker-compose down
-docker-compose up -d
-
+docker compose pull
+docker compose up -d
 ```
 
 ### 存储后端配置
@@ -139,8 +137,7 @@ curl http://localhost:3000/v1/images/edits \
 - 兼容 `POST /v1/images/edits` 图片编辑接口
 - 兼容面向图片场景的 `POST /v1/chat/completions`
 - 兼容面向图片场景的 `POST /v1/responses`
-- `GET /v1/models` 返回 `gpt-image-2`、`codex-gpt-image-2`、`auto`、`gpt-5`、`gpt-5-1`、`gpt-5-2`、`gpt-5-3`、`gpt-5-3-mini`、
-  `gpt-5-mini`
+- `GET /v1/models` 动态返回当前账号可用模型及图片模型目录候选；实际结果以接口响应为准
 - 支持通过 `n` 返回多张生成结果
 - 支持 `gpt-image-2.5`、`gpt-image-2.6`，简称默认使用对应的 `sunburst`；也可指定 `gpt-image-2.5-flare`、`gpt-image-2.6-flare` 等完整名称和快照名称。
 - 新版图片模型可用于文生图、图片编辑、Chat Completions 和 Responses。Codex 账号可使用对应的 `codex-` 模型名及 `plus-` / `team-` / `pro-` 前缀；实际可用性取决于上游账号权限。
@@ -152,11 +149,12 @@ curl http://localhost:3000/v1/images/edits \
 ### 在线画图功能
 
 - 内置在线画图工作台，支持生成、图片编辑与多图组图编辑
-- 支持 `gpt-image-2`、`codex-gpt-image-2`、`auto`、`gpt-5`、`gpt-5-1`、`gpt-5-2`、`gpt-5-3`、`gpt-5-3-mini`、`gpt-5-mini` 模型选择
+- 模型列表自动跟随 `GET /v1/models` 更新，也支持自定义输入模型名
 - 编辑模式支持参考图上传
+- 支持 PNG / GIF 输出，可设置 GIF 帧数与帧间隔
 - 前端支持多图生成交互
 - 本地保存图片会话历史，支持回看、删除和清空
-- 支持服务端缓存图片URL
+- 支持服务端缓存图片 URL
 - 图片生成进度追踪，超时后可继续等待
 - 图片懒加载与滚动位置记忆，优化大量图片场景性能
 
@@ -201,14 +199,16 @@ curl http://localhost:3000/v1/images/edits \
 Authorization: Bearer <auth-key>
 ```
 
+以下示例使用 Docker 默认地址 `http://localhost:3000`；本地直接运行后端时，Uvicorn 默认监听 `http://localhost:8000`。
+
 <details>
 <summary><code>GET /v1/models</code></summary>
 <br>
 
-返回当前暴露的图片模型列表。
+返回当前账号上游模型和图片模型目录候选的合并列表。添加 `?refresh=true` 可跳过缓存并立即刷新。
 
 ```bash
-curl http://localhost:8000/v1/models \
+curl 'http://localhost:3000/v1/models?refresh=true' \
   -H "Authorization: Bearer <auth-key>"
 ```
 
@@ -216,10 +216,11 @@ curl http://localhost:8000/v1/models \
 <summary>说明</summary>
 <br>
 
-| 字段   | 说明                                                                                                         |
-|:-----|:-----------------------------------------------------------------------------------------------------------|
-| 返回模型 | `gpt-image-2`、`codex-gpt-image-2`、`auto`、`gpt-5`、`gpt-5-1`、`gpt-5-2`、`gpt-5-3`、`gpt-5-3-mini`、`gpt-5-mini` |
-| 接入场景 | 可接入 Cherry Studio、New API 等上游或客户端                                                                          |
+| 字段 / 参数 | 说明 |
+|:------------|:-----|
+| `refresh` | 查询参数；设为 `true` 时立即重新拉取模型 |
+| `availability` | `account` 表示账号上游已收录，`catalog` 表示图片目录候选 |
+| 接入场景 | 可接入 Cherry Studio、New API 等上游或客户端 |
 
 <br>
 </details>
@@ -232,7 +233,7 @@ curl http://localhost:8000/v1/models \
 OpenAI 兼容图片生成接口，用于文生图。
 
 ```bash
-curl http://localhost:8000/v1/images/generations \
+curl http://localhost:3000/v1/images/generations \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <auth-key>" \
   -d '{
@@ -247,12 +248,19 @@ curl http://localhost:8000/v1/images/generations \
 <summary>字段说明</summary>
 <br>
 
-| 字段                | 说明                                                 |
-|:------------------|:---------------------------------------------------|
-| `model`           | 图片模型，当前可用值以 `/v1/models` 返回结果为准，推荐使用 `gpt-image-2` |
-| `prompt`          | 图片生成提示词                                            |
-| `n`               | 生成数量，当前后端限制为 `1-4`                                 |
-| `response_format` | 当前请求模型中包含该字段，默认值为 `b64_json`                       |
+| 字段 | 说明 |
+|:-----|:-----|
+| `model` | 图片模型，当前可用值以 `/v1/models` 返回结果为准，默认 `gpt-image-2` |
+| `prompt` | 图片生成提示词，必填 |
+| `n` | 生成数量，范围 `1-4`，默认 `1` |
+| `size` | 图片尺寸；GIF 使用 `auto` 或宽高均为 16 倍数的 `WIDTHxHEIGHT` |
+| `quality` | 生成质量，默认 `auto` |
+| `response_format` | 返回格式，默认 `b64_json`；也可使用 `url` |
+| `account_pool` | `default`、`free`、`plus` 或 `pro`；`default` 按 Free → Plus → Pro 自动选择 |
+| `output_format` | `png`（默认）或 `gif` |
+| `frame_count` | GIF 帧数，范围 `2-16`，默认 `9` |
+| `frame_duration_ms` | GIF 单帧时长，范围 `20-2000` 毫秒，默认 `200` |
+| `stream` | 是否流式返回；GIF 不支持 `true` |
 
 <br>
 </details>
@@ -262,10 +270,10 @@ curl http://localhost:8000/v1/images/generations \
 <summary><code>POST /v1/images/edits</code></summary>
 <br>
 
-OpenAI 兼容图片编辑接口，可上传图片文件，也可按官方 JSON 格式传入图片链接并生成编辑结果。
+OpenAI 兼容图片编辑接口，可上传图片文件，也可通过 JSON 传入远程 URL、Data URL 或 Base64 图片并生成编辑结果。单张图片最大 50 MB。
 
 ```bash
-curl http://localhost:8000/v1/images/edits \
+curl http://localhost:3000/v1/images/edits \
   -H "Authorization: Bearer <auth-key>" \
   -F "model=gpt-image-2" \
   -F "prompt=把这张图改成赛博朋克夜景风格" \
@@ -276,7 +284,7 @@ curl http://localhost:8000/v1/images/edits \
 也可以直接传图片 URL：
 
 ```bash
-curl http://localhost:8000/v1/images/edits \
+curl http://localhost:3000/v1/images/edits \
   -H "Authorization: Bearer <auth-key>" \
   -H "Content-Type: application/json" \
   -d '{
@@ -292,14 +300,20 @@ curl http://localhost:8000/v1/images/edits \
 <summary>字段说明</summary>
 <br>
 
-| 字段          | 说明                                            |
-|:------------|:----------------------------------------------|
-| `model`     | 图片模型， `gpt-image-2`                           |
-| `prompt`    | 图片编辑提示词                                       |
-| `n`         | 生成数量，当前后端限制为 `1-4`                            |
-| `image`     | 需要编辑的图片文件，使用 multipart/form-data 上传           |
-| `images`    | JSON 图片引用数组，支持 `{"image_url": "https://..."}` |
-| `image_url` | 表单模式下也可直接传图片链接，支持重复字段传多张图                     |
+| 字段 | 说明 |
+|:-----|:-----|
+| `model` | 图片模型，默认 `gpt-image-2` |
+| `prompt` | 图片编辑提示词，必填 |
+| `n` | 生成数量，范围 `1-4`，默认 `1` |
+| `image` / `image[]` | multipart 图片文件；字段可重复以传入多张图 |
+| `images` | JSON 图片引用数组，支持 `image_url`、`b64_json` 或 `base64` |
+| `image_url` | 表单或 JSON 图片链接；支持远程 HTTP(S) URL 和 Data URL |
+| `mask` / `mask[]` | 可选遮罩图片 |
+| `account_pool` | `default`、`free`、`plus` 或 `pro` |
+| `output_format` | `png`（默认）或 `gif`；参考图生成 GIF 请使用普通图片模型 |
+| `frame_count` | GIF 帧数，范围 `2-16`，默认 `9` |
+| `frame_duration_ms` | GIF 单帧时长，范围 `20-2000` 毫秒，默认 `200` |
+| `stream` | 是否流式返回；GIF 不支持 `true` |
 
 <br>
 </details>
@@ -312,7 +326,7 @@ curl http://localhost:8000/v1/images/edits \
 面向文本、网页搜索与图片场景的 Chat Completions 兼容接口，不是完整通用聊天代理。
 
 ```bash
-curl http://localhost:8000/v1/chat/completions \
+curl http://localhost:3000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <auth-key>" \
   -d '{
@@ -339,6 +353,8 @@ curl http://localhost:8000/v1/chat/completions \
 | `stream`             | 文本、搜索和图片场景均支持，仍在测试                                                           |
 | `tools`              | 文本场景支持 `web_search` / `web_search_preview` / `web_search_preview_2025_03_11` |
 | `web_search_options` | 传入时会触发网页搜索兼容逻辑                                                               |
+| `account_pool`       | 图片或文本请求使用的账号池：`default`、`free`、`plus` 或 `pro`                             |
+| `output_format`      | 图片请求输出 `png` 或 `gif`；GIF 还可传 `frame_count`、`frame_duration_ms`                 |
 
 <br>
 </details>
@@ -351,7 +367,7 @@ curl http://localhost:8000/v1/chat/completions \
 面向文本、网页搜索和图片生成工具调用的 Responses API 兼容接口，不是完整通用 Responses API 代理。
 
 ```bash
-curl http://localhost:8000/v1/responses \
+curl http://localhost:3000/v1/responses \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <auth-key>" \
   -d '{
@@ -375,6 +391,8 @@ curl http://localhost:8000/v1/responses \
 | `input`  | 输入内容；搜索使用最后一条用户文本，图片生成需能解析出提示词                                                          |
 | `tools`  | 支持 `image_generation`、`web_search`、`web_search_preview`、`web_search_preview_2025_03_11` |
 | `stream` | 已实现，但仍在测试                                                                               |
+| `account_pool` | 图片或文本请求使用的账号池：`default`、`free`、`plus` 或 `pro`                                      |
+| GIF 参数 | 可在请求体或 `image_generation` 工具中传 `output_format`、`frame_count`、`frame_duration_ms`          |
 
 <br>
 </details>
@@ -395,5 +413,3 @@ curl http://localhost:8000/v1/responses \
 ## Star History
 
 [![Star History Chart](https://api.star-history.com/chart?repos=basketikun/chatgpt2api&type=date&legend=top-left)](https://www.star-history.com/?repos=basketikun%2Fchatgpt2api&type=date&legend=top-left)
-
-# chatgpt2apiEditV141
