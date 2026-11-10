@@ -158,6 +158,14 @@ export function ImageComposer({
   const [isDraggingImage, setIsDraggingImage] = useState(false);
   const [isOptimizing, setIsOptimizing] = useState(false);
   const [isOptimizeConfigOpen, setIsOptimizeConfigOpen] = useState(false);
+  const [promptSearch, setPromptSearch] = useState("");
+  const [promptPage, setPromptPage] = useState(1);
+  const matchingPrompts = useMemo(() => {
+    const keyword = promptSearch.trim().toLowerCase();
+    return promptLibraryItems.filter((item) => !keyword || `${item.name}\n${item.type}\n${item.content}`.toLowerCase().includes(keyword));
+  }, [promptLibraryItems, promptSearch]);
+  const promptPageCount = Math.max(1, Math.ceil(matchingPrompts.length / 30));
+  const currentPromptPage = Math.min(promptPage, promptPageCount);
   const [optimizeInstruction, setOptimizeInstruction] = useState(DEFAULT_OPTIMIZE_INSTRUCTION);
   const [sizeMenuPos, setSizeMenuPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
   const sizeMenuRef = useRef<HTMLDivElement>(null);
@@ -194,11 +202,12 @@ export function ImageComposer({
       </PopoverTrigger>
       <PopoverContent align="end" className="w-[min(420px,calc(100vw-2rem))] p-3">
         <div className="mb-2 text-sm font-semibold text-stone-900">选择默认提示词</div>
+        <Input aria-label="搜索提示词库" placeholder="搜索名称、分类或内容" value={promptSearch} onChange={(event) => { setPromptSearch(event.target.value); setPromptPage(1); }} className="mb-2" />
         <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
-          {promptLibraryItems.length === 0 ? (
+          {matchingPrompts.length === 0 ? (
             <div className="rounded-xl border border-dashed border-stone-200 bg-stone-50 px-3 py-6 text-center text-sm text-stone-500">暂无提示词</div>
           ) : (
-            promptLibraryItems.map((item) => {
+            matchingPrompts.slice((currentPromptPage - 1) * 30, currentPromptPage * 30).map((item) => {
               const active = selectedPromptIds.includes(item.id);
               return (
                 <button
@@ -222,6 +231,10 @@ export function ImageComposer({
               );
             })
           )}
+        </div>
+        <div className="mt-2 flex items-center justify-between gap-2 text-xs text-stone-500">
+          <span>{matchingPrompts.length} 条 · {currentPromptPage}/{promptPageCount} 页</span>
+          <div className="flex gap-1"><Button variant="outline" size="sm" disabled={currentPromptPage === 1} onClick={() => setPromptPage(currentPromptPage - 1)}>上一页</Button><Button variant="outline" size="sm" disabled={currentPromptPage === promptPageCount} onClick={() => setPromptPage(currentPromptPage + 1)}>下一页</Button></div>
         </div>
       </PopoverContent>
     </Popover>

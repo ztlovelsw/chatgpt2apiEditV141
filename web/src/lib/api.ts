@@ -383,6 +383,8 @@ export type PromptLibraryDraft = {
 
 export type PromptLibraryItem = PromptLibraryDraft & {
   id: string;
+  subscription_id?: string;
+  subscription_override?: boolean;
   created_at: string;
   updated_at: string;
 };
@@ -719,6 +721,43 @@ export async function stopImageTask(taskId: string) {
 
 export async function fetchPromptLibrary() {
   return httpRequest<PromptLibraryResponse>("/api/prompt-library");
+}
+
+export type PromptSubscription = {
+  id: string;
+  name: string;
+  url: string;
+  enabled: boolean;
+  interval_minutes: number;
+  status: "idle" | "queued" | "syncing" | "success" | "error";
+  last_sync_at: number | null;
+  last_success_at: number | null;
+  next_sync_at: number | null;
+  last_error: string;
+  warnings: string[];
+  last_result: { total: number; added: number; updated: number; unchanged: number; skipped: number } | null;
+};
+
+export type PromptSubscriptionResponse = { items: PromptSubscription[] };
+
+export async function fetchPromptSubscriptions() {
+  return httpRequest<PromptSubscriptionResponse>("/api/prompt-subscriptions");
+}
+
+export async function createPromptSubscription(item: { name: string; url: string; interval_minutes: number }) {
+  return httpRequest<PromptSubscriptionResponse>("/api/prompt-subscriptions", { method: "POST", body: item });
+}
+
+export async function updatePromptSubscription(id: string, item: { name?: string; interval_minutes?: number; enabled?: boolean }) {
+  return httpRequest<PromptSubscriptionResponse>(`/api/prompt-subscriptions/${encodeURIComponent(id)}`, { method: "POST", body: item });
+}
+
+export async function syncPromptSubscription(id: string) {
+  return httpRequest<PromptSubscriptionResponse>(`/api/prompt-subscriptions/${encodeURIComponent(id)}/sync`, { method: "POST" });
+}
+
+export async function deletePromptSubscription(id: string) {
+  return httpRequest<PromptSubscriptionResponse>(`/api/prompt-subscriptions/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 
 export type PromptLibraryImportResponse = {

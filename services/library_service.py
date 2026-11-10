@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import mimetypes
 import re
@@ -72,6 +73,10 @@ def _items_from_file(path: Path) -> list[dict[str, Any]]:
     return [item for item in items if isinstance(item, dict)] if isinstance(items, list) else []
 
 
+def _save_items(path: Path, items: list[dict[str, Any]]) -> None:
+    _write_json(path, {**_read_json(path), "items": items})
+
+
 def _extension_for(content_type: str, filename: str = "") -> str:
     content_type = content_type.split(";", 1)[0].strip().lower()
     if content_type in IMAGE_EXTENSIONS:
@@ -138,7 +143,7 @@ class PromptLibraryService:
         with self._lock:
             items = _items_from_file(self.path)
             items.append(item)
-            _write_json(self.path, {"items": items})
+            _save_items(self.path, items)
         return {"item": item, **self.list_items()}
 
     def update_item(self, item_id: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -163,9 +168,11 @@ class PromptLibraryService:
                     next_item["source_url"] = normalize_http_url(payload["source_url"]) if payload.get("source_url") else ""
                 if "example_images" in payload:
                     next_item["example_images"] = normalize_example_images(payload["example_images"])
+                if item.get("subscription_id") and next_item != item:
+                    next_item["subscription_override"] = True
                 next_item["updated_at"] = _now_iso()
                 items[index] = next_item
-                _write_json(self.path, {"items": items})
+                _save_items(self.path, items)
                 break
             else:
                 raise HTTPException(status_code=404, detail={"error": "提示词不存在"})
@@ -177,8 +184,65 @@ class PromptLibraryService:
             next_items = [item for item in items if str(item.get("id")) != item_id]
             if len(next_items) == len(items):
                 raise HTTPException(status_code=404, detail={"error": "提示词不存在"})
-            _write_json(self.path, {"items": next_items})
+            state = _read_json(self.path)
+            removed = next(item for item in items if str(item.get("id")) == item_id)
+            if removed.get("subscription_id"):
+                ignored = state.setdefault("ignored_subscription_items", {})
+                ignored.setdefault(removed["subscription_id"], []).append(removed["subscription_key"])
+            _write_json(self.path, {**state, "items": next_items})
         return self.list_items()
+
+    def sync_subscription(self, subscription_id: str, drafts: list[dict[str, Any]]) -> dict[str, int]:
+        """Merge a validated snapshot once, preserving edits and explicitly removed entries."""
+        fields = ("name", "type", "content", "note", "source_url", "example_images")
+        prepared = []
+        occurrences: dict[str, int] = {}
+        for draft in drafts:
+            identity = f'id:{draft["source_id"]}' if draft.get("source_id") is not None else f'name:{draft["name"]}'
+            occurrences[identity] = occurrences.get(identity, 0) + 1
+            key = hashlib.sha256(f'{identity}:{occurrences[identity]}'.encode()).hexdigest()
+            content = _clean(draft["content"])
+            if not content:
+                raise HTTPException(status_code=400, detail={"error": "订阅中存在空提示词，本次未写入"})
+            prepared.append((key, {
+                "name": _safe_name(draft["name"], content[:24]), "type": _safe_type(draft.get("type")),
+                "content": content, "note": _clean(draft.get("note"))[:500],
+                "source_url": normalize_http_url(draft["source_url"]) if draft.get("source_url") else "",
+                "example_images": normalize_example_images(draft.get("example_images", [])),
+            }))
+        counts = {"total": len(prepared), "added": 0, "updated": 0, "unchanged": 0, "skipped": 0}
+        now = _now_iso()
+        with self._lock:
+            state = _read_json(self.path)
+            items = state.get("items", [])
+            existing = {item["subscription_key"]: item for item in items if item.get("subscription_id") == subscription_id}
+            ignored = set(state.get("ignored_subscription_items", {}).get(subscription_id, []))
+            for key, draft in prepared:
+                item = existing.get(key)
+                if key in ignored or (item and item.get("subscription_override")):
+                    counts["skipped"] += 1
+                elif item is None:
+                    items.append({**draft, "id": uuid.uuid4().hex, "subscription_id": subscription_id,
+                                  "subscription_key": key, "created_at": now, "updated_at": now})
+                    counts["added"] += 1
+                elif any(item.get(field) != draft[field] for field in fields):
+                    item.update({**draft, "updated_at": now})
+                    counts["updated"] += 1
+                else:
+                    counts["unchanged"] += 1
+            if counts["added"] or counts["updated"]:
+                _write_json(self.path, {**state, "items": items})
+        return counts
+
+    def detach_subscription(self, subscription_id: str) -> None:
+        with self._lock:
+            state = _read_json(self.path)
+            for item in state.get("items", []):
+                if item.get("subscription_id") == subscription_id:
+                    for key in ("subscription_id", "subscription_key", "subscription_override"):
+                        item.pop(key, None)
+            state.get("ignored_subscription_items", {}).pop(subscription_id, None)
+            _write_json(self.path, state)
 
 
 class MaterialLibraryService:

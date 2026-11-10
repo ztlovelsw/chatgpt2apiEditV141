@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Download, ExternalLink, Link2, LoaderCircle, Pencil, Plus, Search, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 
@@ -21,6 +21,7 @@ import {
   type PromptLibraryItem,
 } from "@/lib/api";
 import { useAuthGuard } from "@/lib/use-auth-guard";
+import { PromptSubscriptions } from "./components/prompt-subscriptions";
 
 type PromptForm = {
   id?: string;
@@ -47,6 +48,7 @@ export default function PromptsPage() {
   const [types, setTypes] = useState<string[]>([]);
   const [query, setQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState("all");
+  const [page, setPage] = useState(1);
   const [form, setForm] = useState<PromptForm>(emptyForm);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -61,8 +63,8 @@ export default function PromptsPage() {
   const importedItems = importResult?.items || [];
   const importWarnings = importResult?.warnings || [];
 
-  const load = async () => {
-    setLoading(true);
+  const load = useCallback(async (quiet = false) => {
+    if (!quiet) setLoading(true);
     try {
       const data = await fetchPromptLibrary();
       setItems(data.items);
@@ -72,12 +74,13 @@ export default function PromptsPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+  const refreshLibrary = useCallback(() => { void load(true); }, [load]);
 
   useEffect(() => {
     if (!session) return;
     void load();
-  }, [session]);
+  }, [session, load]);
 
   const filtered = useMemo(() => {
     const keyword = query.trim().toLowerCase();
@@ -87,6 +90,9 @@ export default function PromptsPage() {
       return matchesType && (!keyword || haystack.includes(keyword));
     });
   }, [items, query, typeFilter]);
+  const pageCount = Math.max(1, Math.ceil(filtered.length / 30));
+  const currentPage = Math.min(page, pageCount);
+  const visibleItems = filtered.slice((currentPage - 1) * 30, currentPage * 30);
 
   const resetForm = () => {
     setForm(emptyForm);
@@ -200,13 +206,15 @@ export default function PromptsPage() {
       <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-stone-950">提示词</h1>
-          <p className="mt-1 text-sm text-stone-500">保存常用提示词，或通过链接拉取提示词和示例效果图。</p>
+          <p className="mt-1 text-sm text-stone-500">管理常用提示词，订阅多个来源并自动更新提示词与示例图。</p>
         </div>
         <Button className="rounded-xl bg-stone-950 text-white hover:bg-stone-800" disabled={busy} onClick={resetForm}>
           <Plus className="size-4" />
           新建提示词
         </Button>
       </div>
+
+      <PromptSubscriptions onLibraryChange={refreshLibrary} />
 
       <div className="grid min-h-0 grid-cols-1 gap-4 lg:grid-cols-[380px_minmax(0,1fr)]">
         <div className="min-w-0 rounded-2xl border border-stone-200/80 bg-white/85 p-4 shadow-[0_18px_70px_-52px_rgba(15,23,42,0.45)] backdrop-blur">
@@ -251,6 +259,7 @@ export default function PromptsPage() {
             ) : null}
           </div>
           <div className="mb-3 text-sm font-semibold text-stone-900">{form.id ? "编辑提示词" : "新增提示词"}</div>
+          {form.id && items.find((item) => item.id === form.id)?.subscription_id ? <p className="mb-3 text-xs leading-5 text-amber-700">编辑保存后将保留本地内容，后续订阅同步不会覆盖这条提示词。</p> : null}
           <fieldset disabled={busy} className="min-w-0 space-y-3">
             <Input aria-label="名称" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="名称" className="rounded-xl border-stone-200 bg-white" />
             <Input aria-label="类型" value={form.type} onChange={(event) => setForm({ ...form, type: event.target.value })} placeholder="类型，例如：摄影、人像、产品图" className="rounded-xl border-stone-200 bg-white" />
@@ -288,9 +297,9 @@ export default function PromptsPage() {
           <div className="mb-3 flex flex-col gap-2 sm:flex-row">
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-stone-400" />
-              <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索名称、内容或备注" className="rounded-xl border-stone-200 bg-white pl-9" />
+              <Input value={query} onChange={(event) => { setQuery(event.target.value); setPage(1); }} placeholder="搜索名称、内容或备注" className="rounded-xl border-stone-200 bg-white pl-9" />
             </div>
-            <Select value={typeFilter} onValueChange={setTypeFilter}>
+            <Select value={typeFilter} onValueChange={(value) => { setTypeFilter(value); setPage(1); }}>
               <SelectTrigger className="w-full rounded-xl border-stone-200 bg-white sm:w-44">
                 <SelectValue />
               </SelectTrigger>
@@ -300,6 +309,10 @@ export default function PromptsPage() {
               </SelectContent>
             </Select>
           </div>
+          <div className="mb-3 flex items-center justify-between gap-2 text-xs text-stone-500">
+            <span>共 {filtered.length} 条 · 第 {currentPage}/{pageCount} 页</span>
+            <div className="flex gap-2"><Button size="sm" variant="outline" disabled={currentPage === 1} onClick={() => setPage(currentPage - 1)}>上一页</Button><Button size="sm" variant="outline" disabled={currentPage === pageCount} onClick={() => setPage(currentPage + 1)}>下一页</Button></div>
+          </div>
 
           <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
             {loading ? (
@@ -307,12 +320,13 @@ export default function PromptsPage() {
             ) : filtered.length === 0 ? (
               <div className="flex h-40 items-center justify-center rounded-xl border border-dashed border-stone-200 bg-stone-50 text-sm text-stone-500">暂无提示词</div>
             ) : (
-              filtered.map((item) => (
+              visibleItems.map((item) => (
                 <div key={item.id} className="rounded-xl border border-stone-200 bg-white p-3">
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <div className="truncate text-sm font-semibold text-stone-900">{item.name}</div>
                       <div className="mt-1 inline-flex rounded-lg bg-stone-100 px-2 py-0.5 text-xs text-stone-500">{item.type}</div>
+                      {item.subscription_id ? <span className="ml-2 text-xs text-stone-500">{item.subscription_override ? "订阅 · 已保留本地修改" : "订阅同步"}</span> : null}
                     </div>
                     <div className="flex shrink-0 gap-1">
                       <Button variant="outline" size="sm" aria-label={`编辑 ${item.name}`} disabled={busy} className="size-8 rounded-xl border-stone-200 bg-white p-0" onClick={() => selectDraft(item, item.id)}>
@@ -328,7 +342,7 @@ export default function PromptsPage() {
                       {item.example_images.map((url, index) => <button key={url} type="button" aria-label={`预览 ${item.name} 示例图 ${index + 1}`} className="shrink-0 cursor-zoom-in" onClick={() => openPreview(item.example_images || [], index)}><PromptExampleImage src={url} alt={`${item.name} 示例效果图 ${index + 1}`} className="size-24 sm:size-28" /></button>)}
                     </div>
                   ) : null}
-                  <pre className="mt-3 whitespace-pre-wrap break-words rounded-xl bg-stone-50 p-3 text-xs leading-5 text-stone-700">{item.content}</pre>
+                  <pre className="mt-3 max-h-64 overflow-y-auto whitespace-pre-wrap break-words rounded-xl bg-stone-50 p-3 text-xs leading-5 text-stone-700">{item.content}</pre>
                   {item.note ? <div className="mt-2 text-xs text-stone-500">{item.note}</div> : null}
                   {item.source_url ? <a href={item.source_url} target="_blank" rel="noopener noreferrer" className="mt-2 flex items-center gap-1 text-xs text-stone-500 hover:text-stone-900"><ExternalLink className="size-3 shrink-0" /><span className="truncate">查看来源 · {item.source_url}</span></a> : null}
                 </div>

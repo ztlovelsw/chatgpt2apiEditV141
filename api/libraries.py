@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from api.support import require_identity
 from services.library_service import material_library_service, prompt_library_service
 from services.prompt_import_service import import_prompt_url
+from services.prompt_subscription_service import prompt_subscription_service
 
 
 class PromptPayload(BaseModel):
@@ -23,6 +24,19 @@ class PromptImportPayload(BaseModel):
     url: str = Field(min_length=1, max_length=4096)
     page: int = Field(default=1, ge=1)
     query: str = Field(default="", max_length=200)
+
+
+class PromptSubscriptionPayload(BaseModel):
+    name: str = Field(default="", max_length=120)
+    url: str = Field(min_length=1, max_length=4096)
+    interval_minutes: int = Field(default=720, ge=5, le=10080)
+    enabled: bool = True
+
+
+class PromptSubscriptionUpdatePayload(BaseModel):
+    name: str = Field(default="", max_length=120)
+    interval_minutes: int = Field(default=720, ge=5, le=10080)
+    enabled: bool = True
 
 
 class MaterialPayload(BaseModel):
@@ -43,6 +57,31 @@ class MaterialUpdatePayload(BaseModel):
 
 def create_router() -> APIRouter:
     router = APIRouter()
+
+    @router.get("/api/prompt-subscriptions")
+    async def list_subscriptions(authorization: str | None = Header(default=None)):
+        require_identity(authorization)
+        return await run_in_threadpool(prompt_subscription_service.list_items)
+
+    @router.post("/api/prompt-subscriptions")
+    async def create_subscription(body: PromptSubscriptionPayload, authorization: str | None = Header(default=None)):
+        require_identity(authorization)
+        return await run_in_threadpool(prompt_subscription_service.create_item, body.model_dump())
+
+    @router.post("/api/prompt-subscriptions/{item_id}")
+    async def update_subscription(item_id: str, body: PromptSubscriptionUpdatePayload, authorization: str | None = Header(default=None)):
+        require_identity(authorization)
+        return await run_in_threadpool(prompt_subscription_service.update_item, item_id, body.model_dump(exclude_unset=True))
+
+    @router.post("/api/prompt-subscriptions/{item_id}/sync")
+    async def sync_subscription(item_id: str, authorization: str | None = Header(default=None)):
+        require_identity(authorization)
+        return await run_in_threadpool(prompt_subscription_service.request_sync, item_id)
+
+    @router.delete("/api/prompt-subscriptions/{item_id}")
+    async def delete_subscription(item_id: str, authorization: str | None = Header(default=None)):
+        require_identity(authorization)
+        return await run_in_threadpool(prompt_subscription_service.delete_item, item_id)
 
     @router.get("/api/prompt-library")
     async def list_prompts(authorization: str | None = Header(default=None)):

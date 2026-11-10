@@ -762,6 +762,9 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
 
   useEffect(() => {
     void loadLibraries();
+    const refreshOnFocus = () => { void loadLibraries(); };
+    window.addEventListener("focus", refreshOnFocus);
+    return () => window.removeEventListener("focus", refreshOnFocus);
   }, [loadLibraries]);
 
   const togglePromptSelection = useCallback((id: string) => {

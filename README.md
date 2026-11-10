@@ -107,6 +107,15 @@ environment:
 - 导入接口：`POST /api/prompt-library/import-url`，使用现有 Bearer 密钥认证，请求体为 `{"url":"https://example.com/prompt.md"}`，返回 `{items, warnings}` 供预览，不会自动写入提示词库。
 - 水仙库导入可额外传入 `page`（从 1 开始）与 `query`，返回 `total`、`page`、`page_size`、`has_more` 和 `source_name`。只有固定的水仙数据分片使用每片 8MB 上限，普通网页仍限制为 2MB。
 
+### 多来源提示词订阅
+
+- 在「提示词 → 提示词订阅」填写名称、链接和自定义更新间隔，可添加多个来源。默认每 12 小时同步，支持选择分钟、小时或天（例如 30 分钟、1.5 小时、2 天），范围为 5 分钟至 7 天、精确到整分钟；添加后自动排队进行首次同步，也可立即同步、暂停、恢复或删除订阅。编辑时保留已有订阅的更新间隔。
+- 同步任务在服务器后台运行，每 30 秒检查到期订阅，关闭浏览器也会继续。订阅配置、上次结果和下次时间保存到 `data/libraries/prompt_subscriptions.json`，服务重启后恢复计划。服务需要保持运行；当前部署方式为单个应用进程。
+- 水仙库订阅每次读取全部数据分片；普通网页、Markdown 和 JSON 也可订阅，不受手动预览的 100 条分页限制。JSON 建议给每条提示词提供稳定的 `id`；缺少 ID 时按标题和同名条目的顺序匹配，没有标题的条目按文档位置匹配。单个通用来源最多 20000 条，下载大小限制与手动导入一致。
+- 同一订阅再次同步时更新已有条目的文字和示例图，保持本地条目 ID。手动编辑的条目保留本地内容，手动删除的条目不会被重新加入；上游删除条目、删除订阅时均保留已同步内容。下载或解析失败时保留本地库，并展示错误和下次重试时间。
+- 提示词列表和生图页的提示词选择器支持本地搜索、每页 30 条，避免全量订阅后一次渲染大量图片。
+- 管理接口均使用现有 Bearer 密钥：`GET/POST /api/prompt-subscriptions`、`POST/DELETE /api/prompt-subscriptions/{id}`、`POST /api/prompt-subscriptions/{id}/sync`。新增请求示例：`{"name":"水仙提示词","url":"https://github.com/BaYue-SYJ/shuixian-prompts","interval_minutes":720}`，省略间隔时默认 720 分钟。编辑支持 `name`、`interval_minutes`、`enabled`；修改来源链接请删除后重新订阅。
+
 ### 生图号池分档
 
 - 按订阅档位划分 GPT Free、Plus、Pro 三档。账号页面分别展示真实剩余额度和账号数；登录来源不再决定普通账号的订阅分组。

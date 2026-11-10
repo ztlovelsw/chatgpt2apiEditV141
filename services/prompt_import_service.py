@@ -18,6 +18,7 @@ from services.proxy_service import proxy_settings
 
 MAX_DOCUMENT_BYTES = 2 * 1024 * 1024
 MAX_IMPORT_ITEMS = 100
+MAX_SUBSCRIPTION_ITEMS = 20000
 MAX_EXAMPLE_IMAGES = 12
 PROMPT_LABEL = re.compile(r"^(?:提示词|正向提示词|prompt|positive prompt)(?:\s*[：:]\s*|\s*$)", re.I)
 PROMPT_SELECTOR = '[data-prompt], .prompt, .prompt-text, .prompt-content, #prompt, textarea'
@@ -169,10 +170,10 @@ def _draft(content: str, title: str, images: list[str], source_url: str, **extra
     }
 
 
-def _json_drafts(value: Any, base_url: str, source_url: str, *, embedded: bool = False) -> list[dict[str, Any]]:
+def _json_drafts(value: Any, base_url: str, source_url: str, *, embedded: bool = False, max_items: int = MAX_IMPORT_ITEMS) -> list[dict[str, Any]]:
     drafts: list[dict[str, Any]] = []
     pending = [value]
-    while pending and len(drafts) < MAX_IMPORT_ITEMS:
+    while pending and len(drafts) < max_items:
         item = pending.pop()
         if isinstance(item, list):
             pending.extend(reversed(item))
@@ -187,6 +188,10 @@ def _json_drafts(value: Any, base_url: str, source_url: str, *, embedded: bool =
                     _image_urls(images, base_url), source_url,
                     type=str(item.get("type") or "默认"), note=str(item.get("note") or ""),
                 ))
+                if item.get("id") is not None:
+                    drafts[-1]["source_id"] = str(item["id"])
+                elif not (item.get("name") or item.get("title")):
+                    drafts[-1]["source_id"] = f"position:{len(drafts)}"
             else:
                 pending.extend(reversed([child for child in item.values() if isinstance(child, (dict, list))]))
     return drafts
@@ -210,7 +215,7 @@ def _html_images(root: Tag, base_url: str) -> list[str]:
     return _image_urls(values, base_url)
 
 
-def _html_drafts(text: str, base_url: str, source_url: str) -> tuple[list[dict[str, Any]], list[str]]:
+def _html_drafts(text: str, base_url: str, source_url: str, *, max_items: int = MAX_IMPORT_ITEMS) -> tuple[list[dict[str, Any]], list[str]]:
     soup = BeautifulSoup(text, "html.parser")
     title = _node_text(soup.title) if soup.title else ""
     metadata_images = _image_urls([
@@ -219,7 +224,7 @@ def _html_drafts(text: str, base_url: str, source_url: str) -> tuple[list[dict[s
     embedded: list[dict[str, Any]] = []
     for script in soup.select('script[type="application/json"], script[type="application/ld+json"]'):
         try:
-            embedded.extend(_json_drafts(json.loads(script.get_text()), base_url, source_url, embedded=True))
+            embedded.extend(_json_drafts(json.loads(script.get_text()), base_url, source_url, embedded=True, max_items=max_items))
         except (ValueError, RecursionError):
             continue
     for node in soup.select("script, style, nav, header, footer, aside, button, noscript, [hidden], [aria-hidden='true']"):
@@ -260,7 +265,9 @@ def _html_drafts(text: str, base_url: str, source_url: str) -> tuple[list[dict[s
                     scope.append(BeautifulSoup(str(sibling), "html.parser"))
             images = _html_images(scope, base_url)
         drafts.append(_draft(content, name, images, source_url))
-        if len(drafts) >= MAX_IMPORT_ITEMS:
+        if not name:
+            drafts[-1]["source_id"] = f"block:{len(drafts)}"
+        if len(drafts) >= max_items:
             break
 
     if not drafts:
@@ -298,7 +305,7 @@ def _html_drafts(text: str, base_url: str, source_url: str) -> tuple[list[dict[s
     return drafts, warnings
 
 
-def parse_prompt_document(text: str, content_type: str, base_url: str, source_url: str) -> dict[str, Any]:
+def parse_prompt_document(text: str, content_type: str, base_url: str, source_url: str, *, max_items: int = MAX_IMPORT_ITEMS) -> dict[str, Any]:
     stripped = text.lstrip()
     warnings: list[str] = []
     is_json = content_type in {"application/json", "application/ld+json"} or urlsplit(base_url).path.endswith(".json")
@@ -311,13 +318,13 @@ def parse_prompt_document(text: str, content_type: str, base_url: str, source_ur
             if is_json:
                 raise _error("链接返回的 JSON 格式无效") from exc
     if is_json:
-        drafts = _json_drafts(value, base_url, source_url)
+        drafts = _json_drafts(value, base_url, source_url, max_items=max_items)
     elif content_type in {"text/html", "application/xhtml+xml"} or re.match(r"(?is)\s*(?:<!doctype\s+html|<html|<head|<body|<article|<main)", text):
-        drafts, warnings = _html_drafts(text, base_url, source_url)
+        drafts, warnings = _html_drafts(text, base_url, source_url, max_items=max_items)
     else:
         rendered = MarkdownIt("commonmark", {"html": True}).render(text)
         try:
-            drafts, warnings = _html_drafts(rendered, base_url, source_url)
+            drafts, warnings = _html_drafts(rendered, base_url, source_url, max_items=max_items)
         except HTTPException:
             root = BeautifulSoup(rendered, "html.parser")
             heading = root.find(re.compile(r"^h[1-6]$"))
@@ -328,14 +335,14 @@ def parse_prompt_document(text: str, content_type: str, base_url: str, source_ur
             if heading:
                 heading.decompose()
             content = root.get_text("\n", strip=True)
-            drafts = [_draft(content, title, images, source_url)] if content else []
+            drafts = [{**_draft(content, title, images, source_url), "source_id": "document"}] if content else []
             warnings.append("未发现独立的提示词区块，已提取文本，请核对后保存。")
-    unique = {item["content"]: item for item in reversed(drafts) if item["content"].strip()}
-    items = list(reversed(unique.values()))[:MAX_IMPORT_ITEMS]
+    unique = {(item.get("source_id") or item["content"]): item for item in reversed(drafts) if item["content"].strip()}
+    items = list(reversed(unique.values()))[:max_items]
     if not items:
         raise _error("链接中没有找到提示词内容")
-    if len(items) == MAX_IMPORT_ITEMS:
-        warnings.append(f"本次最多展示前 {MAX_IMPORT_ITEMS} 条提示词，请使用具体页面缩小范围。")
+    if len(items) == max_items:
+        warnings.append(f"本次最多展示前 {max_items} 条提示词，请使用具体页面缩小范围。")
     if not any(item["example_images"] for item in items):
         warnings.append("页面中未找到示例效果图，可以手动补充图片链接。")
     return {"items": items, "warnings": warnings}
@@ -366,10 +373,10 @@ def _shuixian_target(url: str) -> tuple[list[int], str] | None:
     return [1, 2, 3], parameters.get("id", [""])[0]
 
 
-def _load_shuixian_part(part: int) -> list[dict[str, Any]]:
+def _load_shuixian_part(part: int, *, refresh: bool = False) -> list[dict[str, Any]]:
     with _shuixian_lock:
         cached = _shuixian_cache.get(part)
-        if cached and time.monotonic() - cached[0] < SHUIXIAN_CACHE_SECONDS:
+        if not refresh and cached and time.monotonic() - cached[0] < SHUIXIAN_CACHE_SECONDS:
             return cached[1]
         text, _, _ = _download_document(
             f"{SHUIXIAN_DATA_BASE}prompts.part{part}.json", max_bytes=SHUIXIAN_PART_BYTES,
@@ -421,7 +428,7 @@ def _import_shuixian(parts: list[int], prompt_id: str, page: int, query: str) ->
     }
 
 
-def import_prompt_url(url: str, *, page: int = 1, query: str = "") -> dict[str, Any]:
+def import_prompt_url(url: str, *, page: int = 1, query: str = "", max_items: int = MAX_IMPORT_ITEMS) -> dict[str, Any]:
     source_url = normalize_http_url(url)
     shuixian = _shuixian_target(source_url)
     if shuixian is not None:
@@ -433,4 +440,35 @@ def import_prompt_url(url: str, *, page: int = 1, query: str = "") -> dict[str, 
     if parsed.hostname == "github.com" and len(parts) >= 5 and parts[2] == "blob":
         download_url = "https://raw.githubusercontent.com/" + "/".join(parts[:2] + parts[3:])
     text, content_type, final_url = _download_document(download_url)
-    return parse_prompt_document(text, content_type, final_url, source_url)
+    return parse_prompt_document(text, content_type, final_url, source_url, max_items=max_items)
+
+
+def fetch_prompt_subscription(url: str) -> dict[str, Any]:
+    """Fetch a complete source snapshot; preview pagination does not limit subscriptions."""
+    source_url = normalize_http_url(url)
+    target = _shuixian_target(source_url)
+    if target is not None:
+        parts, prompt_id = target
+        items = [item for part in parts for item in _load_shuixian_part(part, refresh=True)]
+        if prompt_id:
+            items = [item for item in items if item["source_id"] == prompt_id]
+        if not items:
+            raise _error("订阅来源没有可用的提示词")
+        return {"items": items, "warnings": []}
+    result = import_prompt_url(source_url, max_items=MAX_SUBSCRIPTION_ITEMS + 1)
+    if len(result["items"]) > MAX_SUBSCRIPTION_ITEMS:
+        raise _error(f"订阅超过 {MAX_SUBSCRIPTION_ITEMS} 条，请拆分为多个数据链接")
+    return result
+
+
+def normalize_subscription_url(url: str) -> str:
+    source = normalize_http_url(url)
+    target = _shuixian_target(source)
+    if target is None:
+        return source
+    parts, prompt_id = target
+    if prompt_id:
+        return f"https://prompt.qqsrc.com/detail.html?id={quote(prompt_id, safe='')}"
+    if len(parts) == 1:
+        return f"{SHUIXIAN_DATA_BASE}prompts.part{parts[0]}.json"
+    return SHUIXIAN_REPOSITORY
