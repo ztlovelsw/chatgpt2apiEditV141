@@ -1,0 +1,344 @@
+from __future__ import annotations
+
+import ipaddress
+import json
+import re
+import socket
+from typing import Any
+from urllib.parse import urljoin, urlsplit, urlunsplit
+
+from bs4 import BeautifulSoup, Tag
+from curl_cffi import CurlOpt, requests
+from fastapi import HTTPException
+from markdown_it import MarkdownIt
+
+from services.proxy_service import proxy_settings
+
+MAX_DOCUMENT_BYTES = 2 * 1024 * 1024
+MAX_IMPORT_ITEMS = 100
+MAX_EXAMPLE_IMAGES = 12
+PROMPT_LABEL = re.compile(r"^(?:提示词|正向提示词|prompt|positive prompt)(?:\s*[：:]\s*|\s*$)", re.I)
+PROMPT_SELECTOR = '[data-prompt], .prompt, .prompt-text, .prompt-content, #prompt, textarea'
+
+
+def _error(message: str, status: int = 400) -> HTTPException:
+    return HTTPException(status_code=status, detail={"error": message})
+
+
+def normalize_http_url(value: str) -> str:
+    """Validate URLs used for source links and browser image previews."""
+    value = value.strip()
+    try:
+        parsed = urlsplit(value)
+        port = parsed.port
+    except ValueError as exc:
+        raise _error("链接格式无效，请填写完整的 HTTP 或 HTTPS 地址") from exc
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or "\\" in value
+        or any(ord(char) <= 32 for char in value)
+    ):
+        raise _error("请填写不含账号密码的 HTTP 或 HTTPS 链接")
+    try:
+        host = parsed.hostname.encode("idna").decode("ascii")
+    except UnicodeError as exc:
+        raise _error("链接域名格式无效") from exc
+    authority = f"[{host}]" if ":" in host else host
+    if port is not None:
+        authority += f":{port}"
+    return urlunsplit((parsed.scheme, authority, parsed.path or "/", parsed.query, parsed.fragment))
+
+
+def normalize_example_images(values: list[str], base_url: str = "") -> list[str]:
+    images: list[str] = []
+    for value in values:
+        url = normalize_http_url(urljoin(base_url, value.strip()))
+        if url not in images:
+            images.append(url)
+    if len(images) > MAX_EXAMPLE_IMAGES:
+        raise _error(f"每条提示词最多保存 {MAX_EXAMPLE_IMAGES} 张示例图")
+    return images
+
+
+def _public_addresses(url: str) -> tuple[str, int, list[str]]:
+    parsed = urlsplit(url)
+    host = parsed.hostname or ""
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    try:
+        addresses = list(dict.fromkeys(info[4][0] for info in socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)))
+    except socket.gaierror as exc:
+        raise _error("无法解析链接域名，请检查地址或网络", 502) from exc
+    if not addresses or any(not ipaddress.ip_address(address).is_global or ipaddress.ip_address(address).is_multicast for address in addresses):
+        raise _error("仅支持公开网页链接，不能访问本机或内网地址")
+    return host, port, addresses
+
+
+def _download_document(url: str) -> tuple[str, str, str]:
+    """Bound downloads and validate every redirect before making a request."""
+    current = url
+    for _ in range(5):
+        current = normalize_http_url(current)
+        host, port, addresses = _public_addresses(current)
+        resolved = ",".join(f"[{address}]" if ":" in address else address for address in addresses)
+        try:
+            with requests.Session(
+                trust_env=False,
+                curl_options={CurlOpt.RESOLVE: [f"{host}:{port}:{resolved}"]},
+                **proxy_settings.build_session_kwargs(resource=True),
+            ) as session:
+                response = session.get(
+                    current,
+                    headers={"User-Agent": "Mozilla/5.0 (compatible; ChatGPT2API-PromptImporter/1.0)",
+                             "Accept": "text/html, text/plain, text/markdown, application/json"},
+                    timeout=(10, 30),
+                    allow_redirects=False,
+                    stream=True,
+                )
+                try:
+                    if response.status_code in {301, 302, 303, 307, 308}:
+                        location = response.headers.get("location")
+                        if not location:
+                            raise _error("网页返回了无效的跳转地址", 502)
+                        current = urljoin(current, location)
+                        continue
+                    if not 200 <= response.status_code < 300:
+                        raise _error(f"拉取失败：目标网站返回 HTTP {response.status_code}，请使用可公开访问的页面", 502)
+                    mime = response.headers.get("content-type", "").split(";", 1)[0].lower()
+                    if mime and not (mime.startswith("text/") or mime in {"application/json", "application/ld+json", "application/xhtml+xml", "application/octet-stream"}):
+                        raise _error("该链接不是网页、Markdown、文本或 JSON 文件")
+                    content = bytearray()
+                    for chunk in response.iter_content():
+                        content.extend(chunk)
+                        if len(content) > MAX_DOCUMENT_BYTES:
+                            raise _error("页面内容超过 2MB，请使用具体提示词页面或原始文件链接")
+                    # Prefer an explicit HTTP charset; otherwise recognize HTML meta and UTF-8.
+                    charset = re.search(r"charset\s*=\s*[\"']?([\w-]+)", response.headers.get("content-type", ""), re.I)
+                    if charset is None:
+                        charset = re.search(r"charset\s*=\s*[\"']?([\w-]+)", bytes(content[:4096]).decode("ascii", errors="ignore"), re.I)
+                    encoding = charset.group(1) if charset else "utf-8-sig"
+                    try:
+                        text = content.decode(encoding, errors="replace")
+                    except LookupError:
+                        text = content.decode("utf-8-sig", errors="replace")
+                    return text, mime, current
+                finally:
+                    response.close()
+        except requests.RequestsError as exc:
+            raise _error("拉取网页失败，请检查链接或网络后重试", 502) from exc
+    raise _error("页面跳转次数过多，请填写最终页面地址")
+
+
+def _image_urls(values: Any, base_url: str) -> list[str]:
+    if not isinstance(values, list):
+        values = [values]
+    result: list[str] = []
+    for value in values:
+        if isinstance(value, dict):
+            value = value.get("url") or value.get("contentUrl") or value.get("src")
+        if not isinstance(value, str) or not value.strip():
+            continue
+        try:
+            url = normalize_http_url(urljoin(base_url, value.strip()))
+        except HTTPException:
+            continue
+        if url not in result:
+            result.append(url)
+    return result[:MAX_EXAMPLE_IMAGES]
+
+
+def _draft(content: str, title: str, images: list[str], source_url: str, **extra: str) -> dict[str, Any]:
+    return {
+        "name": (" ".join(title.split()) or content.strip()[:24])[:120],
+        "type": extra.get("type", "默认"),
+        "content": content.strip(),
+        "note": extra.get("note", "")[:500],
+        "source_url": source_url,
+        "example_images": images,
+    }
+
+
+def _json_drafts(value: Any, base_url: str, source_url: str, *, embedded: bool = False) -> list[dict[str, Any]]:
+    drafts: list[dict[str, Any]] = []
+    pending = [value]
+    while pending and len(drafts) < MAX_IMPORT_ITEMS:
+        item = pending.pop()
+        if isinstance(item, list):
+            pending.extend(reversed(item))
+        elif isinstance(item, dict):
+            content = item.get("prompt") or item.get("prompt_text") or item.get("positive_prompt")
+            if not content and not embedded:
+                content = item.get("content")
+            if isinstance(content, str) and content.strip():
+                images = item.get("example_images") or item.get("images") or item.get("image") or item.get("image_url") or []
+                drafts.append(_draft(
+                    content, str(item.get("name") or item.get("title") or ""),
+                    _image_urls(images, base_url), source_url,
+                    type=str(item.get("type") or "默认"), note=str(item.get("note") or ""),
+                ))
+            else:
+                pending.extend(reversed([child for child in item.values() if isinstance(child, (dict, list))]))
+    return drafts
+
+
+def _node_text(node: Tag) -> str:
+    if node.name in {"pre", "textarea"}:
+        return node.get_text().strip()
+    return node.get_text("\n", strip=True)
+
+
+def _html_images(root: Tag, base_url: str) -> list[str]:
+    values = []
+    for image in root.select("img"):
+        if any(str(image.get(dimension, "")).isdigit() and int(image[dimension]) < 64 for dimension in ("width", "height")):
+            continue
+        value = image.get("data-src") or image.get("data-original") or image.get("src")
+        if not value and image.get("srcset"):
+            value = str(image["srcset"]).split(",")[-1].strip().split()[0]
+        values.append(value)
+    return _image_urls(values, base_url)
+
+
+def _html_drafts(text: str, base_url: str, source_url: str) -> tuple[list[dict[str, Any]], list[str]]:
+    soup = BeautifulSoup(text, "html.parser")
+    title = _node_text(soup.title) if soup.title else ""
+    metadata_images = _image_urls([
+        tag.get("content") for tag in soup.select('meta[property="og:image"], meta[name="twitter:image"]')
+    ], base_url)
+    embedded: list[dict[str, Any]] = []
+    for script in soup.select('script[type="application/json"], script[type="application/ld+json"]'):
+        try:
+            embedded.extend(_json_drafts(json.loads(script.get_text()), base_url, source_url, embedded=True))
+        except (ValueError, RecursionError):
+            continue
+    for node in soup.select("script, style, nav, header, footer, aside, button, noscript, [hidden], [aria-hidden='true']"):
+        node.decompose()
+    root = soup.select_one("article, .markdown-body, main, [role='main']") or soup.body or soup
+    candidates = root.select(f"{PROMPT_SELECTOR}, pre, blockquote")
+    # Keep the enclosing block once, including multiline code and blockquotes.
+    candidate_ids = {id(node) for node in candidates}
+    candidates = [node for node in candidates if not any(id(parent) in candidate_ids for parent in node.parents)]
+    drafts = list(embedded)
+    for node in candidates:
+        content = str(node.get("data-prompt") or _node_text(node)).strip()
+        content = PROMPT_LABEL.sub("", content).strip()
+        if not content:
+            continue
+        heading = node.find_previous(re.compile(r"^h[1-6]$"))
+        name = _node_text(heading) if heading else title
+        if PROMPT_LABEL.fullmatch(name):
+            heading = heading.find_previous(re.compile(r"^h[1-6]$")) if heading else None
+            name = _node_text(heading) if heading else title
+        # A card/section or heading interval keeps different prompts' examples apart.
+        images: list[str] = []
+        for parent in node.parents:
+            if parent is root:
+                break
+            if sum(1 for candidate in candidates if any(ancestor is parent for ancestor in candidate.parents)) > 1:
+                break
+            images = _html_images(parent, base_url)
+            if images:
+                break
+        if not images:
+            scope = BeautifulSoup("", "html.parser")
+            start = heading or node
+            for sibling in start.next_siblings:
+                if isinstance(sibling, Tag):
+                    if re.fullmatch(r"h[1-6]", sibling.name) and (heading is None or int(sibling.name[1]) <= int(heading.name[1])) and not PROMPT_LABEL.fullmatch(_node_text(sibling)):
+                        break
+                    scope.append(BeautifulSoup(str(sibling), "html.parser"))
+            images = _html_images(scope, base_url)
+        drafts.append(_draft(content, name, images, source_url))
+        if len(drafts) >= MAX_IMPORT_ITEMS:
+            break
+
+    if not drafts:
+        for heading in root.find_all(re.compile(r"^h[1-6]$")):
+            if not PROMPT_LABEL.fullmatch(_node_text(heading)):
+                continue
+            paragraphs: list[str] = []
+            for sibling in heading.next_siblings:
+                if isinstance(sibling, Tag):
+                    if re.fullmatch(r"h[1-6]", sibling.name):
+                        break
+                    if sibling.name == "p":
+                        paragraphs.append(_node_text(sibling))
+            content = "\n\n".join(part for part in paragraphs if part)
+            if content:
+                name = heading.find_previous(re.compile(r"^h[1-6]$"))
+                drafts.append(_draft(content, _node_text(name) if name else title, [], source_url))
+
+    if not drafts:
+        # A labeled paragraph is common on hand-written tutorial pages.
+        for node in root.select("p"):
+            content = node.get_text(" ", strip=True)
+            if PROMPT_LABEL.match(content):
+                content = PROMPT_LABEL.sub("", content).strip()
+                if not content:
+                    following = node.find_next_sibling()
+                    content = _node_text(following) if following and following.name == "p" else ""
+                if content:
+                    drafts.append(_draft(content, title, [], source_url))
+    warnings = []
+    if not drafts:
+        raise _error("未找到可识别的提示词。请使用包含提示词正文的公开页面、Markdown 或 JSON 链接；登录页和仅靠脚本加载的内容暂不支持")
+    if len(drafts) == 1 and not drafts[0]["example_images"]:
+        drafts[0]["example_images"] = _html_images(root, base_url) or metadata_images
+    return drafts, warnings
+
+
+def parse_prompt_document(text: str, content_type: str, base_url: str, source_url: str) -> dict[str, Any]:
+    stripped = text.lstrip()
+    warnings: list[str] = []
+    is_json = content_type in {"application/json", "application/ld+json"} or urlsplit(base_url).path.endswith(".json")
+    value: Any = None
+    if is_json or stripped.startswith(("{", "[")):
+        try:
+            value = json.loads(text)
+            is_json = True
+        except (ValueError, RecursionError) as exc:
+            if is_json:
+                raise _error("链接返回的 JSON 格式无效") from exc
+    if is_json:
+        drafts = _json_drafts(value, base_url, source_url)
+    elif content_type in {"text/html", "application/xhtml+xml"} or re.match(r"(?is)\s*(?:<!doctype\s+html|<html|<head|<body|<article|<main)", text):
+        drafts, warnings = _html_drafts(text, base_url, source_url)
+    else:
+        rendered = MarkdownIt("commonmark", {"html": True}).render(text)
+        try:
+            drafts, warnings = _html_drafts(rendered, base_url, source_url)
+        except HTTPException:
+            root = BeautifulSoup(rendered, "html.parser")
+            heading = root.find(re.compile(r"^h[1-6]$"))
+            title = _node_text(heading) if heading else ""
+            images = _html_images(root, base_url)
+            for image in root.select("img"):
+                image.decompose()
+            if heading:
+                heading.decompose()
+            content = root.get_text("\n", strip=True)
+            drafts = [_draft(content, title, images, source_url)] if content else []
+            warnings.append("未发现独立的提示词区块，已提取文本，请核对后保存。")
+    unique = {item["content"]: item for item in reversed(drafts) if item["content"].strip()}
+    items = list(reversed(unique.values()))[:MAX_IMPORT_ITEMS]
+    if not items:
+        raise _error("链接中没有找到提示词内容")
+    if len(items) == MAX_IMPORT_ITEMS:
+        warnings.append(f"本次最多展示前 {MAX_IMPORT_ITEMS} 条提示词，请使用具体页面缩小范围。")
+    if not any(item["example_images"] for item in items):
+        warnings.append("页面中未找到示例效果图，可以手动补充图片链接。")
+    return {"items": items, "warnings": warnings}
+
+
+def import_prompt_url(url: str) -> dict[str, Any]:
+    source_url = normalize_http_url(url)
+    parsed = urlsplit(source_url)
+    download_url = source_url
+    # GitHub file pages contain UI code; import the original document instead.
+    parts = parsed.path.strip("/").split("/")
+    if parsed.hostname == "github.com" and len(parts) >= 5 and parts[2] == "blob":
+        download_url = "https://raw.githubusercontent.com/" + "/".join(parts[:2] + parts[3:])
+    text, content_type, final_url = _download_document(download_url)
+    return parse_prompt_document(text, content_type, final_url, source_url)

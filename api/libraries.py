@@ -3,10 +3,11 @@ from __future__ import annotations
 from fastapi import APIRouter, File, Form, Header, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from api.support import require_identity
 from services.library_service import material_library_service, prompt_library_service
+from services.prompt_import_service import import_prompt_url
 
 
 class PromptPayload(BaseModel):
@@ -14,6 +15,12 @@ class PromptPayload(BaseModel):
     type: str = "默认"
     content: str = ""
     note: str = ""
+    source_url: str = ""
+    example_images: list[str] = Field(default_factory=list, max_length=12)
+
+
+class PromptImportPayload(BaseModel):
+    url: str = Field(min_length=1, max_length=4096)
 
 
 class MaterialPayload(BaseModel):
@@ -45,10 +52,15 @@ def create_router() -> APIRouter:
         require_identity(authorization)
         return await run_in_threadpool(prompt_library_service.create_item, body.model_dump())
 
+    @router.post("/api/prompt-library/import-url")
+    async def import_prompt(body: PromptImportPayload, authorization: str | None = Header(default=None)):
+        require_identity(authorization)
+        return await run_in_threadpool(import_prompt_url, body.url)
+
     @router.post("/api/prompt-library/{item_id}")
     async def update_prompt(item_id: str, body: PromptPayload, authorization: str | None = Header(default=None)):
         require_identity(authorization)
-        return await run_in_threadpool(prompt_library_service.update_item, item_id, body.model_dump())
+        return await run_in_threadpool(prompt_library_service.update_item, item_id, body.model_dump(exclude_unset=True))
 
     @router.delete("/api/prompt-library/{item_id}")
     async def delete_prompt(item_id: str, authorization: str | None = Header(default=None)):

@@ -14,6 +14,7 @@ from typing import Any
 from fastapi import HTTPException
 
 from services.config import DATA_DIR
+from services.prompt_import_service import normalize_example_images, normalize_http_url
 
 LIBRARY_DIR = DATA_DIR / "libraries"
 PROMPTS_FILE = LIBRARY_DIR / "prompts.json"
@@ -129,6 +130,8 @@ class PromptLibraryService:
             "type": _safe_type(payload.get("type")),
             "content": content,
             "note": _clean(payload.get("note"))[:500],
+            "source_url": normalize_http_url(payload["source_url"]) if payload.get("source_url") else "",
+            "example_images": normalize_example_images(payload.get("example_images", [])),
             "created_at": now,
             "updated_at": now,
         }
@@ -156,11 +159,17 @@ class PromptLibraryService:
                     next_item["content"] = content
                 if "note" in payload:
                     next_item["note"] = _clean(payload.get("note"))[:500]
+                if "source_url" in payload:
+                    next_item["source_url"] = normalize_http_url(payload["source_url"]) if payload.get("source_url") else ""
+                if "example_images" in payload:
+                    next_item["example_images"] = normalize_example_images(payload["example_images"])
                 next_item["updated_at"] = _now_iso()
                 items[index] = next_item
                 _write_json(self.path, {"items": items})
-                return {"item": next_item, **self.list_items()}
-        raise HTTPException(status_code=404, detail={"error": "提示词不存在"})
+                break
+            else:
+                raise HTTPException(status_code=404, detail={"error": "提示词不存在"})
+        return {"item": next_item, **self.list_items()}
 
     def delete_item(self, item_id: str) -> dict[str, Any]:
         with self._lock:

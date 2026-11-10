@@ -411,6 +411,7 @@ export function ImageLightbox({
             <img
               src={current.src}
               alt=""
+              referrerPolicy="no-referrer"
               className={cn(
                 "max-h-[90vh] max-w-[90vw] rounded-lg object-contain will-change-transform",
                 isGesturing ? "" : "transition-transform duration-150 ease-out",

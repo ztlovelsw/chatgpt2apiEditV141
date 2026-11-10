@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEve
 import { toast } from "sonner";
 
 import { ImageMarkupEditor } from "@/app/image/components/image-markup-editor";
+import { PromptExampleImage } from "@/components/prompt-example-image";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -204,16 +205,19 @@ export function ImageComposer({
                   key={item.id}
                   type="button"
                   className={cn(
-                    "w-full rounded-xl border px-3 py-2 text-left transition",
+                    "flex w-full items-center gap-3 rounded-xl border px-3 py-2 text-left transition",
                     active ? "border-stone-950 bg-stone-950 text-white" : "border-stone-200 bg-white text-stone-800 hover:bg-stone-50",
                   )}
                   onClick={() => onTogglePromptSelection(item.id)}
                 >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="truncate text-sm font-medium">{item.name}</span>
-                    <span className={cn("shrink-0 rounded-lg px-2 py-0.5 text-xs", active ? "bg-white/15 text-white" : "bg-stone-100 text-stone-500")}>{item.type}</span>
+                  {item.example_images?.[0] ? <PromptExampleImage src={item.example_images[0]} alt={`${item.name} 示例`} className="size-14" /> : null}
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="truncate text-sm font-medium">{item.name}</span>
+                      <span className={cn("shrink-0 rounded-lg px-2 py-0.5 text-xs", active ? "bg-white/15 text-white" : "bg-stone-100 text-stone-500")}>{item.type}</span>
+                    </div>
+                    <div className={cn("mt-1 line-clamp-2 text-xs leading-5", active ? "text-white/75" : "text-stone-500")}>{item.content}</div>
                   </div>
-                  <div className={cn("mt-1 line-clamp-2 text-xs leading-5", active ? "text-white/75" : "text-stone-500")}>{item.content}</div>
                 </button>
               );
             })

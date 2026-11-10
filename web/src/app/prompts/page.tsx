@@ -1,18 +1,22 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { LoaderCircle, Pencil, Plus, Search, Trash2 } from "lucide-react";
+import { Download, ExternalLink, Link2, LoaderCircle, Pencil, Plus, Search, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { ImageLightbox } from "@/components/image-lightbox";
+import { PromptExampleImage } from "@/components/prompt-example-image";
 import {
   createPromptLibraryItem,
   deletePromptLibraryItem,
   fetchPromptLibrary,
+  importPromptLibraryUrl,
   updatePromptLibraryItem,
+  type PromptLibraryDraft,
   type PromptLibraryItem,
 } from "@/lib/api";
 import { useAuthGuard } from "@/lib/use-auth-guard";
@@ -23,6 +27,8 @@ type PromptForm = {
   type: string;
   content: string;
   note: string;
+  source_url: string;
+  example_images: string[];
 };
 
 const emptyForm: PromptForm = {
@@ -30,6 +36,8 @@ const emptyForm: PromptForm = {
   type: "默认",
   content: "",
   note: "",
+  source_url: "",
+  example_images: [],
 };
 
 export default function PromptsPage() {
@@ -41,6 +49,14 @@ export default function PromptsPage() {
   const [form, setForm] = useState<PromptForm>(emptyForm);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [importUrl, setImportUrl] = useState("");
+  const [importing, setImporting] = useState(false);
+  const [importedItems, setImportedItems] = useState<PromptLibraryDraft[]>([]);
+  const [importWarnings, setImportWarnings] = useState<string[]>([]);
+  const [imageUrl, setImageUrl] = useState("");
+  const [previewImages, setPreviewImages] = useState<string[]>([]);
+  const [previewIndex, setPreviewIndex] = useState(0);
+  const busy = saving || importing;
 
   const load = async () => {
     setLoading(true);
@@ -64,12 +80,65 @@ export default function PromptsPage() {
     const keyword = query.trim().toLowerCase();
     return items.filter((item) => {
       const matchesType = typeFilter === "all" || item.type === typeFilter;
-      const haystack = `${item.name}\n${item.type}\n${item.content}\n${item.note || ""}`.toLowerCase();
+      const haystack = `${item.name}\n${item.type}\n${item.content}\n${item.note || ""}\n${item.source_url || ""}`.toLowerCase();
       return matchesType && (!keyword || haystack.includes(keyword));
     });
   }, [items, query, typeFilter]);
 
-  const resetForm = () => setForm(emptyForm);
+  const resetForm = () => {
+    setForm(emptyForm);
+    setImageUrl("");
+  };
+
+  const selectDraft = (item: PromptLibraryDraft, id?: string) => {
+    setForm({ ...emptyForm, ...item, id, note: item.note || "", source_url: item.source_url || "", example_images: item.example_images || [] });
+    setImageUrl("");
+  };
+
+  const importFromUrl = async () => {
+    if (!importUrl.trim()) {
+      toast.error("请填写要拉取的链接");
+      return;
+    }
+    setImporting(true);
+    setImportedItems([]);
+    setImportWarnings([]);
+    try {
+      const data = await importPromptLibraryUrl(importUrl.trim());
+      setImportedItems(data.items);
+      setImportWarnings(data.warnings);
+      selectDraft(data.items[0]);
+      toast.success(`已识别 ${data.items.length} 条提示词，请核对后保存`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "拉取失败");
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const addExampleImage = () => {
+    try {
+      const url = new URL(imageUrl.trim());
+      if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) throw new Error();
+      if (form.example_images.includes(url.href)) {
+        toast.info("这张示例图已添加");
+        return;
+      }
+      if (form.example_images.length >= 12) {
+        toast.error("每条提示词最多保存 12 张示例图");
+        return;
+      }
+      setForm({ ...form, example_images: [...form.example_images, url.href] });
+      setImageUrl("");
+    } catch {
+      toast.error("请填写有效的 HTTP 或 HTTPS 图片链接");
+    }
+  };
+
+  const openPreview = (images: string[], index: number) => {
+    setPreviewImages(images);
+    setPreviewIndex(index);
+  };
 
   const save = async () => {
     if (!form.content.trim()) {
@@ -83,6 +152,8 @@ export default function PromptsPage() {
         type: form.type.trim() || "默认",
         content: form.content,
         note: form.note,
+        source_url: form.source_url,
+        example_images: form.example_images,
       };
       const data = form.id
         ? await updatePromptLibraryItem(form.id, payload)
@@ -124,22 +195,65 @@ export default function PromptsPage() {
       <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-stone-950">提示词</h1>
-          <p className="mt-1 text-sm text-stone-500">保存经常使用的提示词，并在生图时快速选择。</p>
+          <p className="mt-1 text-sm text-stone-500">保存常用提示词，或通过链接拉取提示词和示例效果图。</p>
         </div>
-        <Button className="rounded-xl bg-stone-950 text-white hover:bg-stone-800" onClick={resetForm}>
+        <Button className="rounded-xl bg-stone-950 text-white hover:bg-stone-800" disabled={busy} onClick={resetForm}>
           <Plus className="size-4" />
           新建提示词
         </Button>
       </div>
 
-      <div className="grid min-h-0 gap-4 lg:grid-cols-[380px_minmax(0,1fr)]">
-        <div className="rounded-2xl border border-stone-200/80 bg-white/85 p-4 shadow-[0_18px_70px_-52px_rgba(15,23,42,0.45)] backdrop-blur">
+      <div className="grid min-h-0 grid-cols-1 gap-4 lg:grid-cols-[380px_minmax(0,1fr)]">
+        <div className="min-w-0 rounded-2xl border border-stone-200/80 bg-white/85 p-4 shadow-[0_18px_70px_-52px_rgba(15,23,42,0.45)] backdrop-blur">
+          <div className="mb-4 space-y-3 border-b border-stone-200 pb-4">
+            <div className="flex items-center gap-2 text-sm font-semibold text-stone-900"><Link2 className="size-4" />从链接新建</div>
+            <div className="flex gap-2">
+              <Input aria-label="提示词来源链接" type="url" value={importUrl} disabled={busy} onChange={(event) => setImportUrl(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void importFromUrl(); } }} placeholder="粘贴网页、Markdown 或 JSON 链接" className="min-w-0 rounded-xl border-stone-200 bg-white" />
+              <Button variant="outline" disabled={busy || !importUrl.trim()} className="shrink-0 rounded-xl border-stone-200 bg-white" onClick={() => void importFromUrl()}>
+                {importing ? <LoaderCircle className="size-4 animate-spin" /> : <Download className="size-4" />}
+                {importing ? "拉取中" : "拉取"}
+              </Button>
+            </div>
+            <p className="text-xs leading-5 text-stone-500">支持公开网页及 GitHub 文件链接，拉取后可编辑再保存。示例图保留原站链接。</p>
+            {importWarnings.length > 0 ? <div role="status" className="space-y-1 rounded-xl bg-amber-50 p-3 text-xs leading-5 text-amber-800">{importWarnings.map((warning) => <p key={warning}>{warning}</p>)}</div> : null}
+            {importedItems.length > 1 ? (
+              <div className="space-y-2">
+                <p className="text-xs text-stone-500">识别到 {importedItems.length} 条，选择一条填入下方表单：</p>
+                <div className="max-h-52 space-y-2 overflow-y-auto">
+                  {importedItems.map((item, index) => (
+                    <button key={index} type="button" disabled={busy} className="flex w-full items-center gap-2 rounded-xl border border-stone-200 p-2 text-left hover:bg-stone-50 disabled:opacity-50" onClick={() => selectDraft(item)}>
+                      {item.example_images?.[0] ? <PromptExampleImage src={item.example_images[0]} alt={`${item.name} 示例`} className="size-12" /> : null}
+                      <span className="min-w-0"><span className="block truncate text-sm font-medium text-stone-800">{item.name}</span><span className="line-clamp-2 text-xs leading-5 text-stone-500">{item.content}</span></span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+          </div>
           <div className="mb-3 text-sm font-semibold text-stone-900">{form.id ? "编辑提示词" : "新增提示词"}</div>
-          <div className="space-y-3">
-            <Input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="名称" className="rounded-xl border-stone-200 bg-white" />
-            <Input value={form.type} onChange={(event) => setForm({ ...form, type: event.target.value })} placeholder="类型，例如：摄影、人像、产品图" className="rounded-xl border-stone-200 bg-white" />
-            <Textarea value={form.content} onChange={(event) => setForm({ ...form, content: event.target.value })} placeholder="提示词内容" className="min-h-48 resize-none rounded-xl border-stone-200 bg-white" />
-            <Textarea value={form.note} onChange={(event) => setForm({ ...form, note: event.target.value })} placeholder="备注，可选" className="min-h-20 resize-none rounded-xl border-stone-200 bg-white" />
+          <fieldset disabled={busy} className="min-w-0 space-y-3">
+            <Input aria-label="名称" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="名称" className="rounded-xl border-stone-200 bg-white" />
+            <Input aria-label="类型" value={form.type} onChange={(event) => setForm({ ...form, type: event.target.value })} placeholder="类型，例如：摄影、人像、产品图" className="rounded-xl border-stone-200 bg-white" />
+            <Textarea aria-label="提示词内容" value={form.content} onChange={(event) => setForm({ ...form, content: event.target.value })} placeholder="提示词内容" className="min-h-48 resize-none rounded-xl border-stone-200 bg-white" />
+            <Textarea aria-label="备注" value={form.note} onChange={(event) => setForm({ ...form, note: event.target.value })} placeholder="备注，可选" className="min-h-20 resize-none rounded-xl border-stone-200 bg-white" />
+            <Input aria-label="来源 URL" type="url" value={form.source_url} onChange={(event) => setForm({ ...form, source_url: event.target.value })} placeholder="来源 URL，可选" className="rounded-xl border-stone-200 bg-white" />
+            <div className="space-y-2">
+              <div className="text-xs font-medium text-stone-700">示例效果图 · {form.example_images.length}/12</div>
+              {form.example_images.length > 0 ? (
+                <div className="grid grid-cols-3 gap-2">
+                  {form.example_images.map((url, index) => (
+                    <div key={url} className="group relative min-w-0">
+                      <button type="button" className="block w-full cursor-zoom-in" aria-label={`预览示例图 ${index + 1}`} onClick={() => openPreview(form.example_images, index)}><PromptExampleImage src={url} alt={`示例效果图 ${index + 1}`} className="aspect-square w-full" /></button>
+                      <button type="button" aria-label={`移除示例图 ${index + 1}`} className="absolute right-1 top-1 rounded-full bg-black/60 p-1 text-white hover:bg-black/80" onClick={() => setForm({ ...form, example_images: form.example_images.filter((_, imageIndex) => imageIndex !== index) })}><X className="size-3" /></button>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+              <div className="flex gap-2">
+                <Input aria-label="示例图链接" type="url" value={imageUrl} onChange={(event) => setImageUrl(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); addExampleImage(); } }} placeholder="补充图片链接" className="min-w-0 rounded-xl border-stone-200 bg-white" />
+                <Button variant="outline" className="shrink-0 rounded-xl border-stone-200 bg-white" disabled={!imageUrl.trim()} onClick={addExampleImage}>添加</Button>
+              </div>
+            </div>
             <div className="flex gap-2">
               <Button className="flex-1 rounded-xl bg-stone-950 text-white hover:bg-stone-800" disabled={saving} onClick={() => void save()}>
                 {saving ? <LoaderCircle className="size-4 animate-spin" /> : null}
@@ -147,10 +261,10 @@ export default function PromptsPage() {
               </Button>
               <Button variant="outline" className="rounded-xl border-stone-200 bg-white" onClick={resetForm}>取消</Button>
             </div>
-          </div>
+          </fieldset>
         </div>
 
-        <div className="flex min-h-0 flex-col rounded-2xl border border-stone-200/80 bg-white/75 p-4 shadow-[0_18px_70px_-52px_rgba(15,23,42,0.45)] backdrop-blur">
+        <div className="flex min-h-0 min-w-0 flex-col rounded-2xl border border-stone-200/80 bg-white/75 p-4 shadow-[0_18px_70px_-52px_rgba(15,23,42,0.45)] backdrop-blur">
           <div className="mb-3 flex flex-col gap-2 sm:flex-row">
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-stone-400" />
@@ -181,22 +295,29 @@ export default function PromptsPage() {
                       <div className="mt-1 inline-flex rounded-lg bg-stone-100 px-2 py-0.5 text-xs text-stone-500">{item.type}</div>
                     </div>
                     <div className="flex shrink-0 gap-1">
-                      <Button variant="outline" size="sm" className="size-8 rounded-xl border-stone-200 bg-white p-0" onClick={() => setForm({ id: item.id, name: item.name, type: item.type, content: item.content, note: item.note || "" })}>
+                      <Button variant="outline" size="sm" aria-label={`编辑 ${item.name}`} disabled={busy} className="size-8 rounded-xl border-stone-200 bg-white p-0" onClick={() => selectDraft(item, item.id)}>
                         <Pencil className="size-3.5" />
                       </Button>
-                      <Button variant="outline" size="sm" className="size-8 rounded-xl border-stone-200 bg-white p-0 text-rose-600" onClick={() => void remove(item.id)}>
+                      <Button variant="outline" size="sm" aria-label={`删除 ${item.name}`} disabled={busy} className="size-8 rounded-xl border-stone-200 bg-white p-0 text-rose-600" onClick={() => void remove(item.id)}>
                         <Trash2 className="size-3.5" />
                       </Button>
                     </div>
                   </div>
+                  {item.example_images?.length ? (
+                    <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
+                      {item.example_images.map((url, index) => <button key={url} type="button" aria-label={`预览 ${item.name} 示例图 ${index + 1}`} className="shrink-0 cursor-zoom-in" onClick={() => openPreview(item.example_images || [], index)}><PromptExampleImage src={url} alt={`${item.name} 示例效果图 ${index + 1}`} className="size-24 sm:size-28" /></button>)}
+                    </div>
+                  ) : null}
                   <pre className="mt-3 whitespace-pre-wrap break-words rounded-xl bg-stone-50 p-3 text-xs leading-5 text-stone-700">{item.content}</pre>
                   {item.note ? <div className="mt-2 text-xs text-stone-500">{item.note}</div> : null}
+                  {item.source_url ? <a href={item.source_url} target="_blank" rel="noopener noreferrer" className="mt-2 flex items-center gap-1 text-xs text-stone-500 hover:text-stone-900"><ExternalLink className="size-3 shrink-0" /><span className="truncate">查看来源 · {item.source_url}</span></a> : null}
                 </div>
               ))
             )}
           </div>
         </div>
       </div>
+      <ImageLightbox images={previewImages.map((src) => ({ id: src, src }))} currentIndex={previewIndex} open={previewImages.length > 0} onOpenChange={(open) => { if (!open) setPreviewImages([]); }} onIndexChange={setPreviewIndex} />
     </section>
   );
 }

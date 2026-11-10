@@ -372,12 +372,17 @@ export type ImageTask = {
   duration_ms?: number;
 };
 
-export type PromptLibraryItem = {
-  id: string;
+export type PromptLibraryDraft = {
   name: string;
   type: string;
   content: string;
   note?: string;
+  source_url?: string;
+  example_images?: string[];
+};
+
+export type PromptLibraryItem = PromptLibraryDraft & {
+  id: string;
   created_at: string;
   updated_at: string;
 };
@@ -716,14 +721,21 @@ export async function fetchPromptLibrary() {
   return httpRequest<PromptLibraryResponse>("/api/prompt-library");
 }
 
-export async function createPromptLibraryItem(item: { name: string; type: string; content: string; note?: string }) {
+export async function importPromptLibraryUrl(url: string) {
+  return httpRequest<{ items: PromptLibraryDraft[]; warnings: string[] }>("/api/prompt-library/import-url", {
+    method: "POST",
+    body: { url },
+  });
+}
+
+export async function createPromptLibraryItem(item: PromptLibraryDraft) {
   return httpRequest<PromptLibraryResponse>("/api/prompt-library", {
     method: "POST",
     body: item,
   });
 }
 
-export async function updatePromptLibraryItem(id: string, item: { name: string; type: string; content: string; note?: string }) {
+export async function updatePromptLibraryItem(id: string, item: PromptLibraryDraft) {
   return httpRequest<PromptLibraryResponse>(`/api/prompt-library/${encodeURIComponent(id)}`, {
     method: "POST",
     body: item,
