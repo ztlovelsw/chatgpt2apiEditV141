@@ -101,9 +101,11 @@ environment:
 
 - 在「提示词」页粘贴公开网页、Markdown、纯文本或 JSON 链接，点击「拉取」，核对内容后保存。GitHub `blob` 文件链接会自动读取原始文件。
 - 支持识别代码块、引用块、提示词字段以及 JSON 的 `prompt` / `content` 内容；一页包含多条提示词时可以逐条选择保存。JSON 示例：`{"name":"橘猫","prompt":"一只橘猫坐在窗台上","images":["https://example.com/cat.png"]}`。
+- 已适配[水仙的 AI 提示词库](https://github.com/BaYue-SYJ/shuixian-prompts)：直接粘贴仓库主页、`https://prompt.qqsrc.com/` 或单条详情链接即可。读取完整数据分片，保留原始提示词（含模板参数）、分类、来源及多张效果图；全库每页 100 条，可按标题、分类或正文搜索，数据缓存 5 分钟。也支持该仓库的 `prompts.part*.json` / `list.part*.json` 文件链接。
 - 每条提示词可保留来源 URL 和最多 12 张示例效果图，支持预览、移除和手动补充图片链接。生图页选择提示词时也会显示示例缩略图。
 - 示例图以原站 URL 保存，显示受原站可访问性影响。需要登录、反爬验证或完全依赖 JavaScript 加载的页面可能无法解析；未识别到内容时会提示更换公开页面或原始文件链接。
 - 导入接口：`POST /api/prompt-library/import-url`，使用现有 Bearer 密钥认证，请求体为 `{"url":"https://example.com/prompt.md"}`，返回 `{items, warnings}` 供预览，不会自动写入提示词库。
+- 水仙库导入可额外传入 `page`（从 1 开始）与 `query`，返回 `total`、`page`、`page_size`、`has_more` 和 `source_name`。只有固定的水仙数据分片使用每片 8MB 上限，普通网页仍限制为 2MB。
 
 ### 生图号池分档
 

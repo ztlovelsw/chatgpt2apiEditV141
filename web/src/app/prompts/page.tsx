@@ -17,6 +17,7 @@ import {
   importPromptLibraryUrl,
   updatePromptLibraryItem,
   type PromptLibraryDraft,
+  type PromptLibraryImportResponse,
   type PromptLibraryItem,
 } from "@/lib/api";
 import { useAuthGuard } from "@/lib/use-auth-guard";
@@ -51,12 +52,14 @@ export default function PromptsPage() {
   const [saving, setSaving] = useState(false);
   const [importUrl, setImportUrl] = useState("");
   const [importing, setImporting] = useState(false);
-  const [importedItems, setImportedItems] = useState<PromptLibraryDraft[]>([]);
-  const [importWarnings, setImportWarnings] = useState<string[]>([]);
+  const [importResult, setImportResult] = useState<(PromptLibraryImportResponse & { url: string; query: string }) | null>(null);
+  const [importQuery, setImportQuery] = useState("");
   const [imageUrl, setImageUrl] = useState("");
   const [previewImages, setPreviewImages] = useState<string[]>([]);
   const [previewIndex, setPreviewIndex] = useState(0);
   const busy = saving || importing;
+  const importedItems = importResult?.items || [];
+  const importWarnings = importResult?.warnings || [];
 
   const load = async () => {
     setLoading(true);
@@ -95,20 +98,22 @@ export default function PromptsPage() {
     setImageUrl("");
   };
 
-  const importFromUrl = async () => {
-    if (!importUrl.trim()) {
+  const importFromUrl = async (options?: { page: number; query: string }) => {
+    const url = options ? importResult!.url : importUrl.trim();
+    const sourceQuery = options?.query || "";
+    if (!url) {
       toast.error("请填写要拉取的链接");
       return;
     }
     setImporting(true);
-    setImportedItems([]);
-    setImportWarnings([]);
     try {
-      const data = await importPromptLibraryUrl(importUrl.trim());
-      setImportedItems(data.items);
-      setImportWarnings(data.warnings);
-      selectDraft(data.items[0]);
-      toast.success(`已识别 ${data.items.length} 条提示词，请核对后保存`);
+      const data = await importPromptLibraryUrl(url, { page: options?.page || 1, query: sourceQuery });
+      setImportResult({ ...data, url, query: sourceQuery });
+      if (!options) {
+        setImportQuery("");
+        if (data.items[0]) selectDraft(data.items[0]);
+        toast.success(`已识别 ${data.total ?? data.items.length} 条提示词，请核对后保存`);
+      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "拉取失败");
     } finally {
@@ -214,19 +219,34 @@ export default function PromptsPage() {
                 {importing ? "拉取中" : "拉取"}
               </Button>
             </div>
-            <p className="text-xs leading-5 text-stone-500">支持公开网页及 GitHub 文件链接，拉取后可编辑再保存。示例图保留原站链接。</p>
+            <p className="text-xs leading-5 text-stone-500">支持公开网页、GitHub 文件及水仙提示词库链接，拉取后可编辑再保存。示例图保留原站链接。</p>
             {importWarnings.length > 0 ? <div role="status" className="space-y-1 rounded-xl bg-amber-50 p-3 text-xs leading-5 text-amber-800">{importWarnings.map((warning) => <p key={warning}>{warning}</p>)}</div> : null}
-            {importedItems.length > 1 ? (
+            {importedItems.length > 1 || importResult?.source_name ? (
               <div className="space-y-2">
-                <p className="text-xs text-stone-500">识别到 {importedItems.length} 条，选择一条填入下方表单：</p>
+                {importResult?.source_name ? (
+                  <>
+                    <p className="text-xs text-stone-500">{importResult.source_name} · 共 {importResult.total} 条 · 第 {importResult.page} 页</p>
+                    <div className="flex gap-2">
+                      <Input aria-label="搜索来源提示词" value={importQuery} disabled={busy} onChange={(event) => setImportQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void importFromUrl({ page: 1, query: importQuery.trim() }); } }} placeholder="搜索标题、分类或提示词正文" className="min-w-0 rounded-xl border-stone-200 bg-white" />
+                      <Button variant="outline" disabled={busy} className="shrink-0 rounded-xl border-stone-200 bg-white" onClick={() => void importFromUrl({ page: 1, query: importQuery.trim() })}>搜索</Button>
+                    </div>
+                  </>
+                ) : <p className="text-xs text-stone-500">识别到 {importedItems.length} 条，选择一条填入下方表单：</p>}
                 <div className="max-h-52 space-y-2 overflow-y-auto">
+                  {importedItems.length === 0 ? <p role="status" className="py-3 text-center text-xs text-stone-500">没有匹配的提示词，请更换关键词。</p> : null}
                   {importedItems.map((item, index) => (
                     <button key={index} type="button" disabled={busy} className="flex w-full items-center gap-2 rounded-xl border border-stone-200 p-2 text-left hover:bg-stone-50 disabled:opacity-50" onClick={() => selectDraft(item)}>
                       {item.example_images?.[0] ? <PromptExampleImage src={item.example_images[0]} alt={`${item.name} 示例`} className="size-12" /> : null}
-                      <span className="min-w-0"><span className="block truncate text-sm font-medium text-stone-800">{item.name}</span><span className="line-clamp-2 text-xs leading-5 text-stone-500">{item.content}</span></span>
+                      <span className="min-w-0"><span className="block truncate text-sm font-medium text-stone-800">{item.name}</span><span className="block text-xs text-stone-500">{item.type}</span><span className="line-clamp-2 text-xs leading-5 text-stone-500">{item.content}</span></span>
                     </button>
                   ))}
                 </div>
+                {importResult?.source_name ? (
+                  <div className="flex justify-between gap-2">
+                    <Button variant="outline" size="sm" disabled={busy || (importResult.page || 1) <= 1} onClick={() => void importFromUrl({ page: (importResult.page || 1) - 1, query: importResult.query })}>上一页</Button>
+                    <Button variant="outline" size="sm" disabled={busy || !importResult.has_more} onClick={() => void importFromUrl({ page: (importResult.page || 1) + 1, query: importResult.query })}>下一页</Button>
+                  </div>
+                ) : null}
               </div>
             ) : null}
           </div>

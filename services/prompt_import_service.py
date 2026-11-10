@@ -4,8 +4,10 @@ import ipaddress
 import json
 import re
 import socket
+import time
+from threading import Lock
 from typing import Any
-from urllib.parse import urljoin, urlsplit, urlunsplit
+from urllib.parse import parse_qs, quote, urljoin, urlsplit, urlunsplit
 
 from bs4 import BeautifulSoup, Tag
 from curl_cffi import CurlOpt, requests
@@ -19,6 +21,13 @@ MAX_IMPORT_ITEMS = 100
 MAX_EXAMPLE_IMAGES = 12
 PROMPT_LABEL = re.compile(r"^(?:提示词|正向提示词|prompt|positive prompt)(?:\s*[：:]\s*|\s*$)", re.I)
 PROMPT_SELECTOR = '[data-prompt], .prompt, .prompt-text, .prompt-content, #prompt, textarea'
+SHUIXIAN_REPOSITORY = "https://github.com/BaYue-SYJ/shuixian-prompts"
+SHUIXIAN_DATA_BASE = "https://raw.githubusercontent.com/BaYue-SYJ/shuixian-prompts/main/shuixian-unified/data/"
+SHUIXIAN_IMAGE_BASE = "https://r2.qqsrc.com/"
+SHUIXIAN_PART_BYTES = 8 * 1024 * 1024
+SHUIXIAN_CACHE_SECONDS = 300
+_shuixian_cache: dict[int, tuple[float, list[dict[str, Any]]]] = {}
+_shuixian_lock = Lock()
 
 
 def _error(message: str, status: int = 400) -> HTTPException:
@@ -76,7 +85,7 @@ def _public_addresses(url: str) -> tuple[str, int, list[str]]:
     return host, port, addresses
 
 
-def _download_document(url: str) -> tuple[str, str, str]:
+def _download_document(url: str, *, max_bytes: int = MAX_DOCUMENT_BYTES) -> tuple[str, str, str]:
     """Bound downloads and validate every redirect before making a request."""
     current = url
     for _ in range(5):
@@ -112,8 +121,8 @@ def _download_document(url: str) -> tuple[str, str, str]:
                     content = bytearray()
                     for chunk in response.iter_content():
                         content.extend(chunk)
-                        if len(content) > MAX_DOCUMENT_BYTES:
-                            raise _error("页面内容超过 2MB，请使用具体提示词页面或原始文件链接")
+                        if len(content) > max_bytes:
+                            raise _error(f"页面内容超过 {max_bytes // (1024 * 1024)}MB，请使用具体提示词页面或原始文件链接")
                     # Prefer an explicit HTTP charset; otherwise recognize HTML meta and UTF-8.
                     charset = re.search(r"charset\s*=\s*[\"']?([\w-]+)", response.headers.get("content-type", ""), re.I)
                     if charset is None:
@@ -332,8 +341,91 @@ def parse_prompt_document(text: str, content_type: str, base_url: str, source_ur
     return {"items": items, "warnings": warnings}
 
 
-def import_prompt_url(url: str) -> dict[str, Any]:
+def _shuixian_target(url: str) -> tuple[list[int], str] | None:
+    """Recognize the documented repository/data links and the site's detail links."""
+    parsed = urlsplit(url)
+    path = parsed.path.rstrip("/")
+    if parsed.hostname == "prompt.qqsrc.com":
+        if path not in {"", "/index.html", "/gallery.html", "/search.html", "/detail.html", "/classic", "/classic/index.html"}:
+            return None
+    elif parsed.hostname in {"github.com", "raw.githubusercontent.com"}:
+        prefix = "/bayue-syj/shuixian-prompts"
+        if not path.lower().startswith(prefix + "/") and path.lower() != prefix:
+            return None
+        suffix = path[len(prefix):]
+        if suffix in {"", "/tree/main", "/tree/main/shuixian-unified", "/blob/main/README.md", "/main/README.md"}:
+            pass
+        else:
+            part = re.fullmatch(r"/(?:blob/|raw/)?main/shuixian-unified/data/(?:prompts|list)\.part([123])\.json", suffix)
+            if part is None:
+                return None
+            return [int(part[1])], ""
+    else:
+        return None
+    parameters = {**parse_qs(parsed.fragment), **parse_qs(parsed.query)}
+    return [1, 2, 3], parameters.get("id", [""])[0]
+
+
+def _load_shuixian_part(part: int) -> list[dict[str, Any]]:
+    with _shuixian_lock:
+        cached = _shuixian_cache.get(part)
+        if cached and time.monotonic() - cached[0] < SHUIXIAN_CACHE_SECONDS:
+            return cached[1]
+        text, _, _ = _download_document(
+            f"{SHUIXIAN_DATA_BASE}prompts.part{part}.json", max_bytes=SHUIXIAN_PART_BYTES,
+        )
+        try:
+            records = json.loads(text)
+        except (ValueError, RecursionError) as exc:
+            raise _error("水仙提示词数据格式无效，请稍后重试", 502) from exc
+        if not isinstance(records, list):
+            raise _error("水仙提示词数据格式已变化，请检查数据源", 502)
+        items = []
+        for record in records:
+            if not isinstance(record, dict) or not isinstance(record.get("prompt"), str) or not record["prompt"].strip():
+                continue
+            record_id = str(record["id"])
+            # The source puts the cover first, followed by any extra example images.
+            images = _image_urls([record.get("image"), *(record.get("images") or [])], SHUIXIAN_IMAGE_BASE)
+            item = _draft(
+                record["prompt"], str(record.get("title") or ""), images,
+                f"https://prompt.qqsrc.com/detail.html?id={quote(record_id, safe='')}",
+                type=str(record.get("category") or "默认"),
+                note=f"来源：水仙的AI提示词 · {SHUIXIAN_REPOSITORY}",
+            )
+            items.append({**item, "source_id": record_id})
+        _shuixian_cache[part] = time.monotonic(), items
+        return items
+
+
+def _import_shuixian(parts: list[int], prompt_id: str, page: int, query: str) -> dict[str, Any]:
+    items = [item for part in parts for item in _load_shuixian_part(part)]
+    if prompt_id:
+        items = [item for item in items if item["source_id"] == prompt_id]
+        if not items:
+            raise _error("没有找到这条水仙提示词，请检查详情链接中的 id", 404)
+    keyword = query.strip().casefold()
+    if keyword:
+        items = [item for item in items if keyword in f'{item["name"]}\n{item["type"]}\n{item["content"]}'.casefold()]
+    total = len(items)
+    page = min(page, max(1, (total + MAX_IMPORT_ITEMS - 1) // MAX_IMPORT_ITEMS))
+    start = (page - 1) * MAX_IMPORT_ITEMS
+    return {
+        "items": items[start:start + MAX_IMPORT_ITEMS],
+        "warnings": [],
+        "source_name": "水仙的AI提示词",
+        "total": total,
+        "page": page,
+        "page_size": MAX_IMPORT_ITEMS,
+        "has_more": start + MAX_IMPORT_ITEMS < total,
+    }
+
+
+def import_prompt_url(url: str, *, page: int = 1, query: str = "") -> dict[str, Any]:
     source_url = normalize_http_url(url)
+    shuixian = _shuixian_target(source_url)
+    if shuixian is not None:
+        return _import_shuixian(*shuixian, page=max(1, page), query=query)
     parsed = urlsplit(source_url)
     download_url = source_url
     # GitHub file pages contain UI code; import the original document instead.

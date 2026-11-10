@@ -721,10 +721,20 @@ export async function fetchPromptLibrary() {
   return httpRequest<PromptLibraryResponse>("/api/prompt-library");
 }
 
-export async function importPromptLibraryUrl(url: string) {
-  return httpRequest<{ items: PromptLibraryDraft[]; warnings: string[] }>("/api/prompt-library/import-url", {
+export type PromptLibraryImportResponse = {
+  items: PromptLibraryDraft[];
+  warnings: string[];
+  source_name?: string;
+  total?: number;
+  page?: number;
+  page_size?: number;
+  has_more?: boolean;
+};
+
+export async function importPromptLibraryUrl(url: string, options: { page?: number; query?: string } = {}) {
+  return httpRequest<PromptLibraryImportResponse>("/api/prompt-library/import-url", {
     method: "POST",
-    body: { url },
+    body: { url, ...options },
   });
 }
 

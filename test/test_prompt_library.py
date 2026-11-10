@@ -180,6 +180,105 @@ class PromptDownloadTests(unittest.TestCase):
             response.close.assert_called_once()
 
 
+class ShuixianImportTests(unittest.TestCase):
+    def setUp(self):
+        # Same schema as shuixian-unified/data/prompts.part*.json, with no live dependency.
+        self.records = [
+            {"id": 22861, "title": "车极简", "category": "车", "prompt": 'A {argument name="car" default="BMW M4"} on a clean background.',
+             "image": "images/originals/22861.jpg", "images": ["images/originals/22861.jpg", "images/originals/22862.jpg"]},
+            {"id": 2, "title": "City poster", "category": "城市海报", "prompt": "Warm light in a city", "image": "images/city.png", "images": []},
+        ]
+        self.parts = {1: self.records, 2: [], 3: []}
+        self.downloads = []
+
+        def download(url, **kwargs):
+            self.downloads.append((url, kwargs))
+            part = int(url.split("part")[1].split(".")[0])
+            return json.dumps(self.parts[part]), "text/plain", url
+
+        mock.patch.object(importer, "_download_document", side_effect=download).start()
+        mock.patch.object(importer, "_shuixian_cache", {}).start()
+        self.addCleanup(mock.patch.stopall)
+
+    def test_repository_root_loads_data_with_category_images_and_attribution(self):
+        result = importer.import_prompt_url(importer.SHUIXIAN_REPOSITORY)
+        self.assertEqual(result["total"], 2)
+        self.assertEqual(result["source_name"], "水仙的AI提示词")
+        item = result["items"][0]
+        self.assertEqual(item["content"], self.records[0]["prompt"])
+        self.assertEqual(item["type"], "车")
+        self.assertEqual(item["example_images"], ["https://r2.qqsrc.com/images/originals/22861.jpg", "https://r2.qqsrc.com/images/originals/22862.jpg"])
+        self.assertEqual(item["source_url"], "https://prompt.qqsrc.com/detail.html?id=22861")
+        self.assertIn(importer.SHUIXIAN_REPOSITORY, item["note"])
+        self.assertEqual(len(self.downloads), 3)
+        self.assertTrue(all(options["max_bytes"] == importer.SHUIXIAN_PART_BYTES for _, options in self.downloads))
+        self.assertTrue(all("prompts.part" in url for url, _ in self.downloads))
+
+    def test_supported_links_use_full_data_and_the_correct_partition(self):
+        for url in (importer.SHUIXIAN_REPOSITORY + "/", importer.SHUIXIAN_REPOSITORY + "/blob/main/README.md", "https://prompt.qqsrc.com/", "https://prompt.qqsrc.com/classic/"):
+            with self.subTest(url=url):
+                self.assertEqual(importer.import_prompt_url(url)["total"], 2)
+        self.parts[2] = [{**self.records[1], "id": 3}]
+        importer._shuixian_cache.clear()
+        self.downloads.clear()
+        for url in (importer.SHUIXIAN_REPOSITORY + "/blob/main/shuixian-unified/data/list.part2.json", importer.SHUIXIAN_DATA_BASE + "prompts.part2.json"):
+            with self.subTest(url=url):
+                result = importer.import_prompt_url(url)
+                self.assertEqual(result["total"], 1)
+                self.assertEqual(result["items"][0]["source_id"], "3")
+        self.assertEqual(len(self.downloads), 1)
+        self.assertIn("prompts.part2.json", self.downloads[0][0])
+
+    def test_detail_query_and_classic_fragment_select_one_prompt(self):
+        for url in ("https://prompt.qqsrc.com/detail.html?id=22861", "https://prompt.qqsrc.com/classic/#id=22861"):
+            with self.subTest(url=url):
+                result = importer.import_prompt_url(url)
+                self.assertEqual(result["total"], 1)
+                self.assertEqual(result["items"][0]["name"], "车极简")
+        with self.assertRaises(HTTPException) as caught:
+            importer.import_prompt_url("https://prompt.qqsrc.com/detail.html?id=missing")
+        self.assertEqual(caught.exception.status_code, 404)
+
+    def test_pagination_covers_all_rows_and_reuses_cached_data(self):
+        self.parts[1] = [{**self.records[0], "id": index} for index in range(205)]
+        first = importer.import_prompt_url(importer.SHUIXIAN_REPOSITORY)
+        second = importer.import_prompt_url(importer.SHUIXIAN_REPOSITORY, page=2)
+        third = importer.import_prompt_url(importer.SHUIXIAN_REPOSITORY, page=3)
+        self.assertEqual([len(page["items"]) for page in (first, second, third)], [100, 100, 5])
+        self.assertEqual([page["has_more"] for page in (first, second, third)], [True, True, False])
+        self.assertEqual(len({item["source_id"] for page in (first, second, third) for item in page["items"]}), 205)
+        self.assertEqual(len(self.downloads), 3)
+        self.assertEqual(importer.import_prompt_url(importer.SHUIXIAN_REPOSITORY, page=999)["page"], 3)
+
+    def test_search_covers_title_category_and_content_in_all_parts(self):
+        self.parts[3] = [{**self.records[1], "id": 3, "prompt": "A bright waterfall", "category": "自然景观"}]
+        for query, expected in (("车极简", "22861"), ("自然景观", "3"), ("WATERFALL", "3")):
+            with self.subTest(query=query):
+                result = importer.import_prompt_url(importer.SHUIXIAN_REPOSITORY, query=query)
+                self.assertEqual(result["total"], 1)
+                self.assertEqual(result["items"][0]["source_id"], expected)
+        empty = importer.import_prompt_url(importer.SHUIXIAN_REPOSITORY, page=5, query="does not exist")
+        self.assertEqual((empty["items"], empty["total"], empty["page"], empty["has_more"]), ([], 0, 1, False))
+
+    def test_cache_refreshes_after_five_minutes(self):
+        importer.import_prompt_url(importer.SHUIXIAN_REPOSITORY)
+        with mock.patch.object(importer.time, "monotonic", return_value=10**15):
+            importer.import_prompt_url(importer.SHUIXIAN_REPOSITORY)
+        self.assertEqual(len(self.downloads), 6)
+
+    def test_wrong_hosts_and_unrelated_repository_pages_do_not_select_adapter(self):
+        for url in ("https://prompt.qqsrc.com.evil.example/", importer.SHUIXIAN_REPOSITORY + "-fake", importer.SHUIXIAN_REPOSITORY + "/issues", "https://example.com/BaYue-SYJ/shuixian-prompts"):
+            with self.subTest(url=url):
+                self.assertIsNone(importer._shuixian_target(url))
+
+    def test_data_failure_does_not_fall_back_to_readme_commands(self):
+        with mock.patch.object(importer, "_download_document", return_value=("<html>Unavailable</html>", "text/html", importer.SHUIXIAN_DATA_BASE)):
+            with self.assertRaises(HTTPException) as caught:
+                importer.import_prompt_url(importer.SHUIXIAN_REPOSITORY)
+        self.assertEqual(caught.exception.status_code, 502)
+        self.assertEqual(importer._shuixian_cache, {})
+
+
 class PromptLibraryApiTests(unittest.TestCase):
     def setUp(self):
         temp = tempfile.TemporaryDirectory()
@@ -239,6 +338,14 @@ class PromptLibraryApiTests(unittest.TestCase):
                 response = self.client.post("/api/prompt-library", headers=self.headers, json={"content": "A cat", **fields})
                 self.assertIn(response.status_code, (400, 422))
         self.assertEqual(self.service.list_items()["items"], [])
+
+    def test_import_api_forwards_page_and_query(self):
+        with mock.patch.object(libraries, "import_prompt_url", return_value={"items": [], "warnings": [], "total": 0}) as load:
+            response = self.client.post("/api/prompt-library/import-url", headers=self.headers, json={"url": importer.SHUIXIAN_REPOSITORY, "page": 2, "query": "海报"})
+            self.assertEqual(response.status_code, 200)
+            load.assert_called_once_with(importer.SHUIXIAN_REPOSITORY, page=2, query="海报")
+            invalid = self.client.post("/api/prompt-library/import-url", headers=self.headers, json={"url": importer.SHUIXIAN_REPOSITORY, "page": 0})
+            self.assertEqual(invalid.status_code, 422)
 
 
 if __name__ == "__main__":

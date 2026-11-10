@@ -21,6 +21,8 @@ class PromptPayload(BaseModel):
 
 class PromptImportPayload(BaseModel):
     url: str = Field(min_length=1, max_length=4096)
+    page: int = Field(default=1, ge=1)
+    query: str = Field(default="", max_length=200)
 
 
 class MaterialPayload(BaseModel):
@@ -55,7 +57,7 @@ def create_router() -> APIRouter:
     @router.post("/api/prompt-library/import-url")
     async def import_prompt(body: PromptImportPayload, authorization: str | None = Header(default=None)):
         require_identity(authorization)
-        return await run_in_threadpool(import_prompt_url, body.url)
+        return await run_in_threadpool(import_prompt_url, body.url, page=body.page, query=body.query)
 
     @router.post("/api/prompt-library/{item_id}")
     async def update_prompt(item_id: str, body: PromptPayload, authorization: str | None = Header(default=None)):
