@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { LoaderCircle, Pause, Pencil, Play, RefreshCw, Rss, Trash2 } from "lucide-react";
+import { ArrowLeft, LoaderCircle, Pause, Pencil, Play, RefreshCw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   createPromptSubscription, deletePromptSubscription, fetchPromptSubscriptions, syncPromptSubscription,
@@ -35,7 +36,14 @@ function displayTime(value: number | null) {
   return value ? new Date(value * 1000).toLocaleString("zh-CN", { hour12: false }) : "—";
 }
 
-export function PromptSubscriptions({ onLibraryChange }: { onLibraryChange: () => void }) {
+type PromptSubscriptionsProps = {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onBack: () => void;
+  onLibraryChange: () => void;
+};
+
+export function PromptSubscriptions({ open, onOpenChange, onBack, onLibraryChange }: PromptSubscriptionsProps) {
   const [items, setItems] = useState<PromptSubscription[]>([]);
   const [form, setForm] = useState(emptyForm);
   const [busyId, setBusyId] = useState("");
@@ -108,56 +116,75 @@ export function PromptSubscriptions({ onLibraryChange }: { onLibraryChange: () =
     }
   };
 
+  const close = () => {
+    if (busyId) return;
+    setForm(emptyForm);
+    onOpenChange(false);
+  };
+
   return (
-    <details open className="shrink-0 rounded-2xl border border-stone-200/80 bg-white/85 p-4">
-      <summary className="cursor-pointer text-sm font-semibold text-stone-900"><Rss className="mr-2 inline size-4" />提示词订阅 · {items.length} 个来源</summary>
-      <p className="mt-2 text-xs leading-5 text-stone-500">添加多个链接后，服务器会定时同步全部提示词和示例图，关闭页面也会继续。默认每 12 小时更新，可按分钟、小时或天自定义，范围为 5 分钟至 7 天。</p>
-      <fieldset disabled={!!busyId} className="mt-3 grid min-w-0 gap-2 sm:grid-cols-2 lg:grid-cols-[minmax(140px,1fr)_minmax(200px,2fr)_210px_auto]">
-        <Input aria-label="订阅名称" placeholder="订阅名称，例如：水仙提示词" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} />
-        <Input aria-label="订阅链接" type="url" placeholder="网页、JSON、Markdown 或水仙仓库链接" value={form.url} disabled={!!form.id} onChange={(event) => setForm({ ...form, url: event.target.value })} className="min-w-0" />
-        <div className="flex items-center gap-2 text-xs text-stone-500">
-          <span className="shrink-0">每</span>
-          <Input aria-label="更新间隔" type="number" min={5 / intervalUnits[form.unit].minutes} max={10080 / intervalUnits[form.unit].minutes} step={form.unit === "minutes" ? 1 : "any"} value={form.interval} onChange={(event) => setForm({ ...form, interval: event.target.value })} className="min-w-0" />
-          <Select value={form.unit} disabled={!!busyId} onValueChange={(unit) => setForm({ ...form, unit: unit as IntervalUnit })}>
-            <SelectTrigger aria-label="更新时间单位" className="w-20 shrink-0"><SelectValue /></SelectTrigger>
-            <SelectContent>{Object.entries(intervalUnits).map(([unit, option]) => <SelectItem key={unit} value={unit}>{option.label}</SelectItem>)}</SelectContent>
-          </Select>
-        </div>
-        <div className="flex gap-2">
-          <Button disabled={!form.url.trim()} onClick={() => void save()} className="bg-stone-950 text-white hover:bg-stone-800">{busyId === (form.id || "new") ? <LoaderCircle className="size-4 animate-spin" /> : null}{form.id ? "保存订阅" : "添加订阅"}</Button>
-          {form.id ? <Button variant="outline" onClick={() => setForm(emptyForm)}>取消</Button> : null}
-        </div>
-      </fieldset>
-      {loadError ? <p role="alert" className="mt-2 text-xs text-rose-600">{loadError}</p> : null}
-      <div className="mt-3 grid gap-3 lg:grid-cols-2">
-        {items.map((item) => {
-          const running = item.status === "syncing";
-          const disabled = !!busyId || running;
-          return (
-            <div key={item.id} data-subscription-id={item.id} className="min-w-0 rounded-xl border border-stone-200 bg-white p-3">
-              <div className="flex items-start justify-between gap-2">
-                <span className="min-w-0 truncate text-sm font-semibold text-stone-900">{item.name}</span>
-                <span className={`shrink-0 text-xs ${item.last_error ? "text-rose-600" : "text-stone-500"}`}>{running ? <LoaderCircle className="mr-1 inline size-3 animate-spin" /> : null}{!item.enabled ? "自动更新已暂停 · " : ""}{statusLabels[item.status]}</span>
-              </div>
-              <a href={item.url} target="_blank" rel="noopener noreferrer" className="mt-1 block truncate text-xs text-stone-500 hover:underline">{item.url}</a>
-              <div className="mt-2 space-y-1 text-xs text-stone-500">
-                <p>每 {displayInterval(item.interval_minutes)} · 上次同步：{displayTime(item.last_sync_at)}</p>
-                <p>下次自动同步：{displayTime(item.next_sync_at)}</p>
-                {item.last_result ? <p>来源 {item.last_result.total} 条 · 新增 {item.last_result.added} · 更新 {item.last_result.updated} · 未变 {item.last_result.unchanged} · 保留本地操作 {item.last_result.skipped}</p> : null}
-                {item.last_error ? <p role="alert" className="break-words text-rose-600">{item.last_error}</p> : null}
-                {item.warnings.map((warning) => <p key={warning} className="text-amber-700">{warning}</p>)}
-              </div>
-              <div className="mt-3 flex flex-wrap gap-2">
-                <Button size="sm" variant="outline" disabled={disabled || item.status === "queued"} onClick={() => void action(item.id, () => syncPromptSubscription(item.id), "同步已排队")}><RefreshCw className="size-3.5" />立即同步</Button>
-                <Button size="sm" variant="outline" disabled={disabled} onClick={() => void action(item.id, () => updatePromptSubscription(item.id, { enabled: !item.enabled }), item.enabled ? "自动更新已暂停" : "自动更新已恢复")}>{item.enabled ? <Pause className="size-3.5" /> : <Play className="size-3.5" />}{item.enabled ? "暂停" : "恢复"}</Button>
-                <Button size="sm" variant="outline" aria-label={`编辑订阅 ${item.name}`} disabled={disabled} onClick={() => setForm({ id: item.id, name: item.name, url: item.url, ...intervalForm(item.interval_minutes) })}><Pencil className="size-3.5" />编辑</Button>
-                <Button size="sm" variant="outline" aria-label={`删除订阅 ${item.name}`} disabled={disabled} onClick={() => void remove(item)}><Trash2 className="size-3.5 text-rose-600" />删除</Button>
-              </div>
+    <Dialog open={open} onOpenChange={(nextOpen) => { if (!nextOpen) close(); }}>
+      <DialogContent showCloseButton={!busyId} className="flex max-h-[90dvh] w-[min(94vw,1040px)] flex-col gap-0 overflow-hidden rounded-2xl p-0">
+        <DialogHeader className="shrink-0 border-b border-stone-200 px-5 py-5 pr-12 sm:px-6">
+          <DialogTitle>提示词订阅</DialogTitle>
+          <DialogDescription className="leading-6">添加和管理多个订阅来源，自动同步提示词与示例图。默认每 12 小时更新，支持自定义间隔。</DialogDescription>
+        </DialogHeader>
+        <div className="min-h-0 overflow-y-auto px-5 py-5 sm:px-6">
+          <h3 className="text-sm font-semibold text-stone-900">{form.id ? "编辑订阅" : "添加订阅"}</h3>
+          <fieldset disabled={!!busyId} className="mt-3 grid min-w-0 gap-2 sm:grid-cols-2 lg:grid-cols-[minmax(120px,1fr)_minmax(180px,2fr)_210px_auto]">
+            <Input aria-label="订阅名称" placeholder="订阅名称，例如：水仙提示词" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} />
+            <Input aria-label="订阅链接" type="url" placeholder="网页、JSON、Markdown 或水仙仓库链接" value={form.url} disabled={!!form.id} onChange={(event) => setForm({ ...form, url: event.target.value })} className="min-w-0" />
+            <div className="flex items-center gap-2 text-xs text-stone-500">
+              <span className="shrink-0">每</span>
+              <Input aria-label="更新间隔" type="number" min={5 / intervalUnits[form.unit].minutes} max={10080 / intervalUnits[form.unit].minutes} step={form.unit === "minutes" ? 1 : "any"} value={form.interval} onChange={(event) => setForm({ ...form, interval: event.target.value })} className="min-w-0" />
+              <Select value={form.unit} disabled={!!busyId} onValueChange={(unit) => setForm({ ...form, unit: unit as IntervalUnit })}>
+                <SelectTrigger aria-label="更新时间单位" className="w-20 shrink-0"><SelectValue /></SelectTrigger>
+                <SelectContent>{Object.entries(intervalUnits).map(([unit, option]) => <SelectItem key={unit} value={unit}>{option.label}</SelectItem>)}</SelectContent>
+              </Select>
             </div>
-          );
-        })}
-      </div>
-      <p className="mt-3 text-xs leading-5 text-stone-500">同步会更新同来源的已有条目。手动编辑或删除的条目会保留你的操作；来源移除的条目及取消订阅后的内容也会保留。</p>
-    </details>
+            <div className="flex gap-2">
+              <Button disabled={!form.url.trim()} onClick={() => void save()} className="bg-stone-950 text-white hover:bg-stone-800">{busyId === (form.id || "new") ? <LoaderCircle className="size-4 animate-spin" /> : null}{form.id ? "保存订阅" : "添加订阅"}</Button>
+              {form.id ? <Button variant="outline" onClick={() => setForm(emptyForm)}>取消</Button> : null}
+            </div>
+          </fieldset>
+          {loadError ? <p role="alert" className="mt-2 text-xs text-rose-600">{loadError}</p> : null}
+          <h3 className="mt-6 text-sm font-semibold text-stone-900">已订阅来源 · {items.length}</h3>
+          {items.length === 0 && !loadError ? <p className="mt-3 rounded-xl border border-dashed border-stone-200 px-4 py-6 text-center text-sm text-stone-500">暂无订阅，添加链接后会自动开始同步。</p> : null}
+          <div className="mt-3 grid gap-3 md:grid-cols-2">
+            {items.map((item) => {
+              const running = item.status === "syncing";
+              const disabled = !!busyId || running;
+              return (
+                <div key={item.id} data-subscription-id={item.id} className="min-w-0 rounded-xl border border-stone-200 bg-white p-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="min-w-0 truncate text-sm font-semibold text-stone-900">{item.name}</span>
+                    <span className={`shrink-0 text-xs ${item.last_error ? "text-rose-600" : "text-stone-500"}`}>{running ? <LoaderCircle className="mr-1 inline size-3 animate-spin" /> : null}{!item.enabled ? "自动更新已暂停 · " : ""}{statusLabels[item.status]}</span>
+                  </div>
+                  <a href={item.url} target="_blank" rel="noopener noreferrer" className="mt-1 block truncate text-xs text-stone-500 hover:underline">{item.url}</a>
+                  <div className="mt-2 space-y-1 text-xs text-stone-500">
+                    <p>每 {displayInterval(item.interval_minutes)} · 上次同步：{displayTime(item.last_sync_at)}</p>
+                    <p>下次自动同步：{displayTime(item.next_sync_at)}</p>
+                    {item.last_result ? <p>来源 {item.last_result.total} 条 · 新增 {item.last_result.added} · 更新 {item.last_result.updated} · 未变 {item.last_result.unchanged} · 保留本地操作 {item.last_result.skipped}</p> : null}
+                    {item.last_error ? <p role="alert" className="break-words text-rose-600">{item.last_error}</p> : null}
+                    {item.warnings.map((warning) => <p key={warning} className="text-amber-700">{warning}</p>)}
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <Button size="sm" variant="outline" disabled={disabled || item.status === "queued"} onClick={() => void action(item.id, () => syncPromptSubscription(item.id), "同步已排队")}><RefreshCw className="size-3.5" />立即同步</Button>
+                    <Button size="sm" variant="outline" disabled={disabled} onClick={() => void action(item.id, () => updatePromptSubscription(item.id, { enabled: !item.enabled }), item.enabled ? "自动更新已暂停" : "自动更新已恢复")}>{item.enabled ? <Pause className="size-3.5" /> : <Play className="size-3.5" />}{item.enabled ? "暂停" : "恢复"}</Button>
+                    <Button size="sm" variant="outline" aria-label={`编辑订阅 ${item.name}`} disabled={disabled} onClick={() => setForm({ id: item.id, name: item.name, url: item.url, ...intervalForm(item.interval_minutes) })}><Pencil className="size-3.5" />编辑</Button>
+                    <Button size="sm" variant="outline" aria-label={`删除订阅 ${item.name}`} disabled={disabled} onClick={() => void remove(item)}><Trash2 className="size-3.5 text-rose-600" />删除</Button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <p className="mt-3 text-xs leading-5 text-stone-500">同步会更新同来源的已有条目。手动编辑或删除的条目会保留你的操作；来源移除的条目及取消订阅后的内容也会保留。</p>
+        </div>
+        <DialogFooter className="shrink-0 border-t border-stone-200 px-5 py-4 sm:justify-between sm:px-6">
+          <Button variant="ghost" disabled={!!busyId} onClick={() => { setForm(emptyForm); onBack(); }}><ArrowLeft className="size-4" />返回选择方式</Button>
+          <Button variant="secondary" disabled={!!busyId} className="rounded-xl" onClick={close}>完成</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

@@ -1,13 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Download, ExternalLink, Link2, LoaderCircle, Pencil, Plus, Search, Trash2, X } from "lucide-react";
+import { ArrowLeft, ChevronRight, Download, ExternalLink, Link2, LoaderCircle, Pencil, Plus, Rss, Search, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { ImageLightbox } from "@/components/image-lightbox";
 import { PromptExampleImage } from "@/components/prompt-example-image";
 import {
@@ -21,6 +22,7 @@ import {
   type PromptLibraryItem,
 } from "@/lib/api";
 import { useAuthGuard } from "@/lib/use-auth-guard";
+import { cn } from "@/lib/utils";
 import { PromptSubscriptions } from "./components/prompt-subscriptions";
 
 type PromptForm = {
@@ -50,6 +52,7 @@ export default function PromptsPage() {
   const [typeFilter, setTypeFilter] = useState("all");
   const [page, setPage] = useState(1);
   const [form, setForm] = useState<PromptForm>(emptyForm);
+  const [dialogMode, setDialogMode] = useState<"menu" | "subscriptions" | "custom" | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [importUrl, setImportUrl] = useState("");
@@ -172,6 +175,7 @@ export default function PromptsPage() {
       setItems(data.items);
       setTypes(data.types);
       resetForm();
+      setDialogMode(null);
       toast.success(form.id ? "提示词已更新" : "提示词已保存");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "保存失败");
@@ -193,6 +197,28 @@ export default function PromptsPage() {
     }
   };
 
+  const clearImport = () => {
+    setImportUrl("");
+    setImportQuery("");
+    setImportResult(null);
+  };
+
+  const openNew = () => {
+    resetForm();
+    clearImport();
+    setDialogMode("menu");
+  };
+
+  const editPrompt = (item: PromptLibraryItem) => {
+    selectDraft(item, item.id);
+    clearImport();
+    setDialogMode("custom");
+  };
+
+  const closeDialog = () => {
+    if (!busy) setDialogMode(null);
+  };
+
   if (isCheckingAuth || !session) {
     return (
       <div className="flex h-full items-center justify-center">
@@ -202,102 +228,25 @@ export default function PromptsPage() {
   }
 
   return (
-    <section className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col gap-4 overflow-y-auto px-1 py-4 sm:px-3">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-stone-950">提示词</h1>
-          <p className="mt-1 text-sm text-stone-500">管理常用提示词，订阅多个来源并自动更新提示词与示例图。</p>
-        </div>
-        <Button className="rounded-xl bg-stone-950 text-white hover:bg-stone-800" disabled={busy} onClick={resetForm}>
-          <Plus className="size-4" />
-          新建提示词
-        </Button>
-      </div>
-
-      <PromptSubscriptions onLibraryChange={refreshLibrary} />
-
-      <div className="grid min-h-0 grid-cols-1 gap-4 lg:grid-cols-[380px_minmax(0,1fr)]">
-        <div className="min-w-0 rounded-2xl border border-stone-200/80 bg-white/85 p-4 shadow-[0_18px_70px_-52px_rgba(15,23,42,0.45)] backdrop-blur">
-          <div className="mb-4 space-y-3 border-b border-stone-200 pb-4">
-            <div className="flex items-center gap-2 text-sm font-semibold text-stone-900"><Link2 className="size-4" />从链接新建</div>
-            <div className="flex gap-2">
-              <Input aria-label="提示词来源链接" type="url" value={importUrl} disabled={busy} onChange={(event) => setImportUrl(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void importFromUrl(); } }} placeholder="粘贴网页、Markdown 或 JSON 链接" className="min-w-0 rounded-xl border-stone-200 bg-white" />
-              <Button variant="outline" disabled={busy || !importUrl.trim()} className="shrink-0 rounded-xl border-stone-200 bg-white" onClick={() => void importFromUrl()}>
-                {importing ? <LoaderCircle className="size-4 animate-spin" /> : <Download className="size-4" />}
-                {importing ? "拉取中" : "拉取"}
-              </Button>
-            </div>
-            <p className="text-xs leading-5 text-stone-500">支持公开网页、GitHub 文件及水仙提示词库链接，拉取后可编辑再保存。示例图保留原站链接。</p>
-            {importWarnings.length > 0 ? <div role="status" className="space-y-1 rounded-xl bg-amber-50 p-3 text-xs leading-5 text-amber-800">{importWarnings.map((warning) => <p key={warning}>{warning}</p>)}</div> : null}
-            {importedItems.length > 1 || importResult?.source_name ? (
-              <div className="space-y-2">
-                {importResult?.source_name ? (
-                  <>
-                    <p className="text-xs text-stone-500">{importResult.source_name} · 共 {importResult.total} 条 · 第 {importResult.page} 页</p>
-                    <div className="flex gap-2">
-                      <Input aria-label="搜索来源提示词" value={importQuery} disabled={busy} onChange={(event) => setImportQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void importFromUrl({ page: 1, query: importQuery.trim() }); } }} placeholder="搜索标题、分类或提示词正文" className="min-w-0 rounded-xl border-stone-200 bg-white" />
-                      <Button variant="outline" disabled={busy} className="shrink-0 rounded-xl border-stone-200 bg-white" onClick={() => void importFromUrl({ page: 1, query: importQuery.trim() })}>搜索</Button>
-                    </div>
-                  </>
-                ) : <p className="text-xs text-stone-500">识别到 {importedItems.length} 条，选择一条填入下方表单：</p>}
-                <div className="max-h-52 space-y-2 overflow-y-auto">
-                  {importedItems.length === 0 ? <p role="status" className="py-3 text-center text-xs text-stone-500">没有匹配的提示词，请更换关键词。</p> : null}
-                  {importedItems.map((item, index) => (
-                    <button key={index} type="button" disabled={busy} className="flex w-full items-center gap-2 rounded-xl border border-stone-200 p-2 text-left hover:bg-stone-50 disabled:opacity-50" onClick={() => selectDraft(item)}>
-                      {item.example_images?.[0] ? <PromptExampleImage src={item.example_images[0]} alt={`${item.name} 示例`} className="size-12" /> : null}
-                      <span className="min-w-0"><span className="block truncate text-sm font-medium text-stone-800">{item.name}</span><span className="block text-xs text-stone-500">{item.type}</span><span className="line-clamp-2 text-xs leading-5 text-stone-500">{item.content}</span></span>
-                    </button>
-                  ))}
-                </div>
-                {importResult?.source_name ? (
-                  <div className="flex justify-between gap-2">
-                    <Button variant="outline" size="sm" disabled={busy || (importResult.page || 1) <= 1} onClick={() => void importFromUrl({ page: (importResult.page || 1) - 1, query: importResult.query })}>上一页</Button>
-                    <Button variant="outline" size="sm" disabled={busy || !importResult.has_more} onClick={() => void importFromUrl({ page: (importResult.page || 1) + 1, query: importResult.query })}>下一页</Button>
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
+    <Dialog open={dialogMode === "menu" || dialogMode === "custom"} onOpenChange={(open) => { if (open) openNew(); else closeDialog(); }}>
+      <section className="mx-auto flex h-full min-h-0 w-full max-w-[1440px] flex-col gap-4 overflow-hidden px-1 py-4 sm:px-3">
+        <div className="flex shrink-0 flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight text-stone-950">提示词</h1>
+            <p className="mt-1 text-sm text-stone-500">浏览常用提示词与示例图，按名称或分类快速查找。</p>
           </div>
-          <div className="mb-3 text-sm font-semibold text-stone-900">{form.id ? "编辑提示词" : "新增提示词"}</div>
-          {form.id && items.find((item) => item.id === form.id)?.subscription_id ? <p className="mb-3 text-xs leading-5 text-amber-700">编辑保存后将保留本地内容，后续订阅同步不会覆盖这条提示词。</p> : null}
-          <fieldset disabled={busy} className="min-w-0 space-y-3">
-            <Input aria-label="名称" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="名称" className="rounded-xl border-stone-200 bg-white" />
-            <Input aria-label="类型" value={form.type} onChange={(event) => setForm({ ...form, type: event.target.value })} placeholder="类型，例如：摄影、人像、产品图" className="rounded-xl border-stone-200 bg-white" />
-            <Textarea aria-label="提示词内容" value={form.content} onChange={(event) => setForm({ ...form, content: event.target.value })} placeholder="提示词内容" className="min-h-48 resize-none rounded-xl border-stone-200 bg-white" />
-            <Textarea aria-label="备注" value={form.note} onChange={(event) => setForm({ ...form, note: event.target.value })} placeholder="备注，可选" className="min-h-20 resize-none rounded-xl border-stone-200 bg-white" />
-            <Input aria-label="来源 URL" type="url" value={form.source_url} onChange={(event) => setForm({ ...form, source_url: event.target.value })} placeholder="来源 URL，可选" className="rounded-xl border-stone-200 bg-white" />
-            <div className="space-y-2">
-              <div className="text-xs font-medium text-stone-700">示例效果图 · {form.example_images.length}/12</div>
-              {form.example_images.length > 0 ? (
-                <div className="grid grid-cols-3 gap-2">
-                  {form.example_images.map((url, index) => (
-                    <div key={url} className="group relative min-w-0">
-                      <button type="button" className="block w-full cursor-zoom-in" aria-label={`预览示例图 ${index + 1}`} onClick={() => openPreview(form.example_images, index)}><PromptExampleImage src={url} alt={`示例效果图 ${index + 1}`} className="aspect-square w-full" /></button>
-                      <button type="button" aria-label={`移除示例图 ${index + 1}`} className="absolute right-1 top-1 rounded-full bg-black/60 p-1 text-white hover:bg-black/80" onClick={() => setForm({ ...form, example_images: form.example_images.filter((_, imageIndex) => imageIndex !== index) })}><X className="size-3" /></button>
-                    </div>
-                  ))}
-                </div>
-              ) : null}
-              <div className="flex gap-2">
-                <Input aria-label="示例图链接" type="url" value={imageUrl} onChange={(event) => setImageUrl(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); addExampleImage(); } }} placeholder="补充图片链接" className="min-w-0 rounded-xl border-stone-200 bg-white" />
-                <Button variant="outline" className="shrink-0 rounded-xl border-stone-200 bg-white" disabled={!imageUrl.trim()} onClick={addExampleImage}>添加</Button>
-              </div>
-            </div>
-            <div className="flex gap-2">
-              <Button className="flex-1 rounded-xl bg-stone-950 text-white hover:bg-stone-800" disabled={saving} onClick={() => void save()}>
-                {saving ? <LoaderCircle className="size-4 animate-spin" /> : null}
-                保存
-              </Button>
-              <Button variant="outline" className="rounded-xl border-stone-200 bg-white" onClick={resetForm}>取消</Button>
-            </div>
-          </fieldset>
+          <DialogTrigger asChild>
+            <Button className="h-10 shrink-0 rounded-xl bg-stone-950 px-4 text-white hover:bg-stone-800" disabled={busy}>
+              <Plus className="size-4" />新建提示词
+            </Button>
+          </DialogTrigger>
         </div>
 
-        <div className="flex min-h-0 min-w-0 flex-col rounded-2xl border border-stone-200/80 bg-white/75 p-4 shadow-[0_18px_70px_-52px_rgba(15,23,42,0.45)] backdrop-blur">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col rounded-2xl border border-stone-200 bg-white/80 p-4 shadow-[0_18px_70px_-52px_rgba(15,23,42,0.45)] backdrop-blur">
           <div className="mb-3 flex flex-col gap-2 sm:flex-row">
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-stone-400" />
-              <Input value={query} onChange={(event) => { setQuery(event.target.value); setPage(1); }} placeholder="搜索名称、内容或备注" className="rounded-xl border-stone-200 bg-white pl-9" />
+              <Input aria-label="搜索提示词" value={query} onChange={(event) => { setQuery(event.target.value); setPage(1); }} placeholder="搜索名称、内容或备注" className="rounded-xl border-stone-200 bg-white pl-9" />
             </div>
             <Select value={typeFilter} onValueChange={(value) => { setTypeFilter(value); setPage(1); }}>
               <SelectTrigger className="w-full rounded-xl border-stone-200 bg-white sm:w-44">
@@ -314,14 +263,14 @@ export default function PromptsPage() {
             <div className="flex gap-2"><Button size="sm" variant="outline" disabled={currentPage === 1} onClick={() => setPage(currentPage - 1)}>上一页</Button><Button size="sm" variant="outline" disabled={currentPage === pageCount} onClick={() => setPage(currentPage + 1)}>下一页</Button></div>
           </div>
 
-          <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
+          <div aria-label="提示词列表" key={`${currentPage}:${query}:${typeFilter}`} className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
             {loading ? (
               <div className="flex h-40 items-center justify-center"><LoaderCircle className="size-5 animate-spin text-stone-400" /></div>
             ) : filtered.length === 0 ? (
               <div className="flex h-40 items-center justify-center rounded-xl border border-dashed border-stone-200 bg-stone-50 text-sm text-stone-500">暂无提示词</div>
             ) : (
               visibleItems.map((item) => (
-                <div key={item.id} className="rounded-xl border border-stone-200 bg-white p-3">
+                <div key={item.id} className="rounded-xl border border-stone-200 bg-white p-4 sm:p-5">
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <div className="truncate text-sm font-semibold text-stone-900">{item.name}</div>
@@ -329,7 +278,7 @@ export default function PromptsPage() {
                       {item.subscription_id ? <span className="ml-2 text-xs text-stone-500">{item.subscription_override ? "订阅 · 已保留本地修改" : "订阅同步"}</span> : null}
                     </div>
                     <div className="flex shrink-0 gap-1">
-                      <Button variant="outline" size="sm" aria-label={`编辑 ${item.name}`} disabled={busy} className="size-8 rounded-xl border-stone-200 bg-white p-0" onClick={() => selectDraft(item, item.id)}>
+                      <Button variant="outline" size="sm" aria-label={`编辑 ${item.name}`} disabled={busy} className="size-8 rounded-xl border-stone-200 bg-white p-0" onClick={() => editPrompt(item)}>
                         <Pencil className="size-3.5" />
                       </Button>
                       <Button variant="outline" size="sm" aria-label={`删除 ${item.name}`} disabled={busy} className="size-8 rounded-xl border-stone-200 bg-white p-0 text-rose-600" onClick={() => void remove(item.id)}>
@@ -339,10 +288,10 @@ export default function PromptsPage() {
                   </div>
                   {item.example_images?.length ? (
                     <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
-                      {item.example_images.map((url, index) => <button key={url} type="button" aria-label={`预览 ${item.name} 示例图 ${index + 1}`} className="shrink-0 cursor-zoom-in" onClick={() => openPreview(item.example_images || [], index)}><PromptExampleImage src={url} alt={`${item.name} 示例效果图 ${index + 1}`} className="size-24 sm:size-28" /></button>)}
+                      {item.example_images.map((url, index) => <button key={url} type="button" aria-label={`预览 ${item.name} 示例图 ${index + 1}`} className="shrink-0 cursor-zoom-in" onClick={() => openPreview(item.example_images || [], index)}><PromptExampleImage src={url} alt={`${item.name} 示例效果图 ${index + 1}`} className="size-28 sm:size-36" /></button>)}
                     </div>
                   ) : null}
-                  <pre className="mt-3 max-h-64 overflow-y-auto whitespace-pre-wrap break-words rounded-xl bg-stone-50 p-3 text-xs leading-5 text-stone-700">{item.content}</pre>
+                  <pre className="mt-3 max-h-64 overflow-y-auto whitespace-pre-wrap break-words rounded-xl bg-stone-50 p-4 text-sm leading-6 text-stone-700">{item.content}</pre>
                   {item.note ? <div className="mt-2 text-xs text-stone-500">{item.note}</div> : null}
                   {item.source_url ? <a href={item.source_url} target="_blank" rel="noopener noreferrer" className="mt-2 flex items-center gap-1 text-xs text-stone-500 hover:text-stone-900"><ExternalLink className="size-3 shrink-0" /><span className="truncate">查看来源 · {item.source_url}</span></a> : null}
                 </div>
@@ -350,8 +299,108 @@ export default function PromptsPage() {
             )}
           </div>
         </div>
-      </div>
+      </section>
+
+      <DialogContent showCloseButton={!busy} className={cn("flex max-h-[90dvh] flex-col gap-0 overflow-hidden rounded-2xl p-0", dialogMode === "custom" ? "w-[min(94vw,800px)]" : "w-[min(92vw,560px)]")}>
+        <DialogHeader className="shrink-0 border-b border-stone-200 px-5 py-5 pr-12 sm:px-6">
+          <DialogTitle>{dialogMode === "menu" ? "新建提示词" : form.id ? "编辑提示词" : "自定义添加提示词"}</DialogTitle>
+          <DialogDescription className="leading-6">{dialogMode === "menu" ? "选择添加方式。" : "填写提示词内容和示例图，也可以从链接导入后编辑保存。"}</DialogDescription>
+        </DialogHeader>
+        <div className="min-h-0 overflow-y-auto px-5 py-5 sm:px-6">
+          {dialogMode === "menu" ? (
+            <div className="space-y-3">
+              {[
+                { mode: "subscriptions" as const, title: "提示词订阅", description: "添加或管理订阅链接，定时更新提示词与示例图。", icon: Rss },
+                { mode: "custom" as const, title: "自定义添加提示词", description: "手动编写提示词，添加示例图，或从链接导入内容。", icon: Pencil },
+              ].map(({ mode, title, description, icon: Icon }) => (
+                <button key={mode} type="button" aria-label={title} onClick={() => setDialogMode(mode)} className="flex w-full items-start gap-4 rounded-2xl border border-stone-200 bg-white p-4 text-left transition hover:border-stone-300 hover:bg-stone-50">
+                  <span className="shrink-0 rounded-xl bg-stone-100 p-3 text-stone-700"><Icon className="size-5" /></span>
+                  <span className="min-w-0 flex-1 space-y-1"><span className="block text-sm font-semibold text-stone-900">{title}</span><span className="block text-sm leading-6 text-stone-500">{description}</span></span>
+                  <ChevronRight className="mt-3 size-4 shrink-0 text-stone-400" />
+                </button>
+              ))}
+            </div>
+          ) : dialogMode === "custom" ? (
+            <div className="min-w-0">
+              <details className="mb-5 rounded-xl border border-stone-200 bg-stone-50/70 p-4">
+                <summary className="cursor-pointer text-sm font-medium text-stone-700"><Link2 className="mr-2 inline size-4" />从链接导入内容（可选）</summary>
+                <div className="mt-3 space-y-3">
+                  <div className="flex gap-2">
+                    <Input aria-label="提示词来源链接" type="url" value={importUrl} disabled={busy} onChange={(event) => setImportUrl(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void importFromUrl(); } }} placeholder="粘贴网页、Markdown 或 JSON 链接" className="min-w-0 rounded-xl border-stone-200 bg-white" />
+                    <Button variant="outline" disabled={busy || !importUrl.trim()} className="shrink-0 rounded-xl border-stone-200 bg-white" onClick={() => void importFromUrl()}>
+                      {importing ? <LoaderCircle className="size-4 animate-spin" /> : <Download className="size-4" />}
+                      {importing ? "拉取中" : "拉取"}
+                    </Button>
+                  </div>
+                  <p className="text-xs leading-5 text-stone-500">支持公开网页、GitHub 文件及水仙提示词库链接，拉取后可编辑再保存。示例图保留原站链接。</p>
+                  {importWarnings.length > 0 ? <div role="status" className="space-y-1 rounded-xl bg-amber-50 p-3 text-xs leading-5 text-amber-800">{importWarnings.map((warning) => <p key={warning}>{warning}</p>)}</div> : null}
+                  {importedItems.length > 1 || importResult?.source_name ? (
+                    <div className="space-y-2">
+                      {importResult?.source_name ? (
+                        <>
+                          <p className="text-xs text-stone-500">{importResult.source_name} · 共 {importResult.total} 条 · 第 {importResult.page} 页</p>
+                          <div className="flex gap-2">
+                            <Input aria-label="搜索来源提示词" value={importQuery} disabled={busy} onChange={(event) => setImportQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void importFromUrl({ page: 1, query: importQuery.trim() }); } }} placeholder="搜索标题、分类或提示词正文" className="min-w-0 rounded-xl border-stone-200 bg-white" />
+                            <Button variant="outline" disabled={busy} className="shrink-0 rounded-xl border-stone-200 bg-white" onClick={() => void importFromUrl({ page: 1, query: importQuery.trim() })}>搜索</Button>
+                          </div>
+                        </>
+                      ) : <p className="text-xs text-stone-500">识别到 {importedItems.length} 条，选择一条填入下方表单：</p>}
+                      <div className="max-h-52 space-y-2 overflow-y-auto">
+                        {importedItems.length === 0 ? <p role="status" className="py-3 text-center text-xs text-stone-500">没有匹配的提示词，请更换关键词。</p> : null}
+                        {importedItems.map((item, index) => (
+                          <button key={index} type="button" disabled={busy} className="flex w-full items-center gap-2 rounded-xl border border-stone-200 p-2 text-left hover:bg-stone-50 disabled:opacity-50" onClick={() => selectDraft(item)}>
+                            {item.example_images?.[0] ? <PromptExampleImage src={item.example_images[0]} alt={`${item.name} 示例`} className="size-12" /> : null}
+                            <span className="min-w-0"><span className="block truncate text-sm font-medium text-stone-800">{item.name}</span><span className="block text-xs text-stone-500">{item.type}</span><span className="line-clamp-2 text-xs leading-5 text-stone-500">{item.content}</span></span>
+                          </button>
+                        ))}
+                      </div>
+                      {importResult?.source_name ? (
+                        <div className="flex justify-between gap-2">
+                          <Button variant="outline" size="sm" disabled={busy || (importResult.page || 1) <= 1} onClick={() => void importFromUrl({ page: (importResult.page || 1) - 1, query: importResult.query })}>上一页</Button>
+                          <Button variant="outline" size="sm" disabled={busy || !importResult.has_more} onClick={() => void importFromUrl({ page: (importResult.page || 1) + 1, query: importResult.query })}>下一页</Button>
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
+              </details>
+              {form.id && items.find((item) => item.id === form.id)?.subscription_id ? <p className="mb-3 text-xs leading-5 text-amber-700">编辑保存后将保留本地内容，后续订阅同步不会覆盖这条提示词。</p> : null}
+              <fieldset disabled={busy} className="min-w-0 space-y-3">
+                <Input aria-label="名称" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="名称" className="rounded-xl border-stone-200 bg-white" />
+                <Input aria-label="类型" value={form.type} onChange={(event) => setForm({ ...form, type: event.target.value })} placeholder="类型，例如：摄影、人像、产品图" className="rounded-xl border-stone-200 bg-white" />
+                <Textarea aria-label="提示词内容" value={form.content} onChange={(event) => setForm({ ...form, content: event.target.value })} placeholder="提示词内容" className="min-h-64 resize-y rounded-xl border-stone-200 bg-white" />
+                <Textarea aria-label="备注" value={form.note} onChange={(event) => setForm({ ...form, note: event.target.value })} placeholder="备注，可选" className="min-h-20 resize-none rounded-xl border-stone-200 bg-white" />
+                <Input aria-label="来源 URL" type="url" value={form.source_url} onChange={(event) => setForm({ ...form, source_url: event.target.value })} placeholder="来源 URL，可选" className="rounded-xl border-stone-200 bg-white" />
+                <div className="space-y-2">
+                  <div className="text-xs font-medium text-stone-700">示例效果图 · {form.example_images.length}/12</div>
+                  {form.example_images.length > 0 ? (
+                    <div className="grid grid-cols-3 gap-2">
+                      {form.example_images.map((url, index) => (
+                        <div key={url} className="group relative min-w-0">
+                          <button type="button" className="block w-full cursor-zoom-in" aria-label={`预览示例图 ${index + 1}`} onClick={() => openPreview(form.example_images, index)}><PromptExampleImage src={url} alt={`示例效果图 ${index + 1}`} className="aspect-square w-full" /></button>
+                          <button type="button" aria-label={`移除示例图 ${index + 1}`} className="absolute right-1 top-1 rounded-full bg-black/60 p-1 text-white hover:bg-black/80" onClick={() => setForm({ ...form, example_images: form.example_images.filter((_, imageIndex) => imageIndex !== index) })}><X className="size-3" /></button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                  <div className="flex gap-2">
+                    <Input aria-label="示例图链接" type="url" value={imageUrl} onChange={(event) => setImageUrl(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); addExampleImage(); } }} placeholder="补充图片链接" className="min-w-0 rounded-xl border-stone-200 bg-white" />
+                    <Button variant="outline" className="shrink-0 rounded-xl border-stone-200 bg-white" disabled={!imageUrl.trim()} onClick={addExampleImage}>添加</Button>
+                  </div>
+                </div>
+              </fieldset>
+            </div>
+          ) : null}
+        </div>
+        <DialogFooter className="shrink-0 border-t border-stone-200 px-5 py-4 sm:px-6">
+          {dialogMode === "custom" && !form.id ? <Button variant="ghost" className="sm:mr-auto" disabled={busy} onClick={() => setDialogMode("menu")}><ArrowLeft className="size-4" />返回选择方式</Button> : null}
+          <Button variant="secondary" className="rounded-xl" disabled={busy} onClick={closeDialog}>取消</Button>
+          {dialogMode === "custom" ? <Button className="rounded-xl bg-stone-950 text-white hover:bg-stone-800" disabled={busy} onClick={() => void save()}>{saving ? <LoaderCircle className="size-4 animate-spin" /> : null}{form.id ? "保存修改" : "保存提示词"}</Button> : null}
+        </DialogFooter>
+      </DialogContent>
+
+      <PromptSubscriptions open={dialogMode === "subscriptions"} onOpenChange={(open) => { if (!open) setDialogMode(null); }} onBack={() => setDialogMode("menu")} onLibraryChange={refreshLibrary} />
       <ImageLightbox images={previewImages.map((src) => ({ id: src, src }))} currentIndex={previewIndex} open={previewImages.length > 0} onOpenChange={(open) => { if (!open) setPreviewImages([]); }} onIndexChange={setPreviewIndex} />
-    </section>
+    </Dialog>
   );
 }
