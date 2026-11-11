@@ -73,7 +73,6 @@ const CHAT_CUSTOM_MODEL_STORAGE_KEY = "chatgpt2api:image_chat_custom_model";
 const CHAT_REASONING_STORAGE_KEY = "chatgpt2api:image_chat_reasoning";
 const CHAT_ACCOUNT_POOL_STORAGE_KEY = "chatgpt2api:chat_account_pool";
 const SCROLL_POSITIONS_STORAGE_KEY = "chatgpt2api:image_scroll_positions";
-const IMAGE_SELECTED_PROMPTS_STORAGE_KEY = "chatgpt2api:image_selected_prompt_ids";
 const IMAGE_SELECTED_MATERIALS_STORAGE_KEY = "chatgpt2api:image_selected_material_ids";
 const SCROLL_TO_LATEST_THRESHOLD = 160;
 const USER_STOPPED_IMAGE_ERROR = "已手动停止生成";
@@ -627,7 +626,6 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
   const [imageModels, setImageModels] = useState<ImageModel[]>(["gpt-image-2"]);
   const [promptLibraryItems, setPromptLibraryItems] = useState<PromptLibraryItem[]>([]);
   const [materialLibraryItems, setMaterialLibraryItems] = useState<MaterialLibraryItem[]>([]);
-  const [selectedPromptIds, setSelectedPromptIds] = useState<string[]>([]);
   const [selectedMaterialIds, setSelectedMaterialIds] = useState<string[]>([]);
   const [chatConfig, setChatConfig] = useState<ImageChatConfig>({
     model: "auto",
@@ -709,7 +707,6 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     if (typeof window === "undefined") {
       return;
     }
-    setSelectedPromptIds(loadStoredIdList(IMAGE_SELECTED_PROMPTS_STORAGE_KEY));
     setSelectedMaterialIds(loadStoredIdList(IMAGE_SELECTED_MATERIALS_STORAGE_KEY));
     setChatConfig({
       model: window.localStorage.getItem(CHAT_MODEL_STORAGE_KEY) || "auto",
@@ -742,12 +739,6 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
       ]);
       setPromptLibraryItems(promptData.items);
       setMaterialLibraryItems(materialData.items);
-      setSelectedPromptIds((current) => {
-        const validIds = new Set(promptData.items.map((item) => item.id));
-        const next = current.filter((id) => validIds.has(id));
-        saveStoredIdList(IMAGE_SELECTED_PROMPTS_STORAGE_KEY, next);
-        return next;
-      });
       setSelectedMaterialIds((current) => {
         const validIds = new Set(materialData.items.map((item) => item.id));
         const next = current.filter((id) => validIds.has(id));
@@ -766,14 +757,6 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
     window.addEventListener("focus", refreshOnFocus);
     return () => window.removeEventListener("focus", refreshOnFocus);
   }, [loadLibraries]);
-
-  const togglePromptSelection = useCallback((id: string) => {
-    setSelectedPromptIds((current) => {
-      const next = current.includes(id) ? current.filter((item) => item !== id) : [...current, id];
-      saveStoredIdList(IMAGE_SELECTED_PROMPTS_STORAGE_KEY, next);
-      return next;
-    });
-  }, []);
 
   const toggleMaterialSelection = useCallback((id: string) => {
     setSelectedMaterialIds((current) => {
@@ -1988,12 +1971,7 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
       return;
     }
 
-    const selectedPrompts = promptLibraryItems.filter((item) => selectedPromptIds.includes(item.id));
-    const selectedPromptText = selectedPrompts
-      .map((item) => item.content.trim())
-      .filter(Boolean)
-      .join("\n\n");
-    const finalPrompt = selectedPromptText ? `${selectedPromptText}\n\n${prompt}` : prompt;
+    const finalPrompt = prompt;
 
     const selectedMaterials = materialLibraryItems.filter((item) => selectedMaterialIds.includes(item.id));
     let materialReferenceFiles: File[] = [];
@@ -2247,7 +2225,6 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
             chatConfig={chatConfig}
             promptLibraryItems={promptLibraryItems}
             materialLibraryItems={materialLibraryItems}
-            selectedPromptIds={selectedPromptIds}
             selectedMaterialIds={selectedMaterialIds}
             availableQuota={availableQuota}
             activeTaskCount={activeTaskCount}
@@ -2263,7 +2240,6 @@ function ImagePageContent({ isAdmin }: { isAdmin: boolean }) {
             onImageQualityChange={setImageQuality}
             onImageModelChange={setImageModel}
             onAccountPoolChange={setImageAccountPool}
-            onTogglePromptSelection={togglePromptSelection}
             onToggleMaterialSelection={toggleMaterialSelection}
             onSubmit={handleSubmit}
             onPickReferenceImage={() => fileInputRef.current?.click()}

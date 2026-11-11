@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowLeft, ChevronRight, Download, ExternalLink, Link2, LoaderCircle, Pencil, Plus, Rss, Search, Trash2, X } from "lucide-react";
+import { ArrowLeft, ChevronRight, Copy, Download, ExternalLink, Link2, LoaderCircle, Pencil, Plus, Rss, Search, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -22,6 +22,7 @@ import {
   type PromptLibraryItem,
 } from "@/lib/api";
 import { useAuthGuard } from "@/lib/use-auth-guard";
+import { copyTextToClipboard } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
 import { PromptSubscriptions } from "./components/prompt-subscriptions";
 
@@ -184,6 +185,15 @@ export default function PromptsPage() {
     }
   };
 
+  const copyPrompt = async (content: string) => {
+    try {
+      await copyTextToClipboard(content);
+      toast.success("提示词已复制");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "复制失败");
+    }
+  };
+
   const remove = async (id: string) => {
     if (!window.confirm("确认删除这个提示词吗？")) return;
     try {
@@ -278,6 +288,9 @@ export default function PromptsPage() {
                       {item.subscription_id ? <span className="ml-2 text-xs text-stone-500">{item.subscription_override ? "订阅 · 已保留本地修改" : "订阅同步"}</span> : null}
                     </div>
                     <div className="flex shrink-0 gap-1">
+                      <Button variant="outline" size="sm" aria-label={`复制 ${item.name}`} title="复制提示词" className="h-8 rounded-xl border-stone-200 bg-white" onClick={() => void copyPrompt(item.content)}>
+                        <Copy className="size-3.5" />复制
+                      </Button>
                       <Button variant="outline" size="sm" aria-label={`编辑 ${item.name}`} disabled={busy} className="size-8 rounded-xl border-stone-200 bg-white p-0" onClick={() => editPrompt(item)}>
                         <Pencil className="size-3.5" />
                       </Button>

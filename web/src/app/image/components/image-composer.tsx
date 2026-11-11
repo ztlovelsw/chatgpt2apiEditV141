@@ -41,7 +41,6 @@ type ImageComposerProps = {
   chatConfig: ImageChatConfig;
   promptLibraryItems: PromptLibraryItem[];
   materialLibraryItems: MaterialLibraryItem[];
-  selectedPromptIds: string[];
   selectedMaterialIds: string[];
   availableQuota: string;
   activeTaskCount: number;
@@ -57,7 +56,6 @@ type ImageComposerProps = {
   onImageQualityChange: (value: string) => void;
   onImageModelChange: (value: ImageModel) => void;
   onAccountPoolChange: (value: AccountPool) => void;
-  onTogglePromptSelection: (id: string) => void;
   onToggleMaterialSelection: (id: string) => void;
   onSubmit: () => void | Promise<void>;
   onPickReferenceImage: () => void;
@@ -129,7 +127,6 @@ export function ImageComposer({
   chatConfig,
   promptLibraryItems,
   materialLibraryItems,
-  selectedPromptIds,
   selectedMaterialIds,
   availableQuota,
   activeTaskCount,
@@ -145,7 +142,6 @@ export function ImageComposer({
   onImageQualityChange,
   onImageModelChange,
   onAccountPoolChange,
-  onTogglePromptSelection,
   onToggleMaterialSelection,
   onSubmit,
   onPickReferenceImage,
@@ -182,7 +178,6 @@ export function ImageComposer({
   const imageSizeLabel = `${poolLabel} · ${qualityLabel} · ${ratioLabel} · ${imageCount || 1} 张`;
   const selectedModelLabel = modelOptions.find((option) => option.value === imageModel)?.label || imageModel;
   const isCodexModel = imageModel.toLowerCase().includes("codex");
-  const selectedPromptCount = selectedPromptIds.length;
   const selectedMaterialCount = selectedMaterialIds.length;
   const promptLibraryPicker = (
     <Popover>
@@ -192,42 +187,37 @@ export function ImageComposer({
           variant="outline"
           className={cn(
             "h-8 shrink-0 rounded-xl border-stone-200 bg-white/95 px-2.5 text-xs font-medium text-stone-700 shadow-sm backdrop-blur sm:h-9 sm:px-3.5",
-            selectedPromptCount > 0 && "border-stone-950 bg-stone-950 text-white hover:bg-stone-800",
           )}
         >
           <BookOpenText className="size-3.5" />
           <span className="hidden sm:inline">提示词</span>
-          {selectedPromptCount > 0 ? <span>{selectedPromptCount}</span> : null}
         </Button>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-[min(420px,calc(100vw-2rem))] p-3">
-        <div className="mb-2 text-sm font-semibold text-stone-900">选择默认提示词</div>
+        <div className="mb-2 text-sm font-semibold text-stone-900">使用提示词</div>
         <Input aria-label="搜索提示词库" placeholder="搜索名称、分类或内容" value={promptSearch} onChange={(event) => { setPromptSearch(event.target.value); setPromptPage(1); }} className="mb-2" />
         <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
           {matchingPrompts.length === 0 ? (
             <div className="rounded-xl border border-dashed border-stone-200 bg-stone-50 px-3 py-6 text-center text-sm text-stone-500">暂无提示词</div>
           ) : (
             matchingPrompts.slice((currentPromptPage - 1) * 30, currentPromptPage * 30).map((item) => {
-              const active = selectedPromptIds.includes(item.id);
               return (
-                <button
-                  key={item.id}
-                  type="button"
-                  className={cn(
-                    "flex w-full items-center gap-3 rounded-xl border px-3 py-2 text-left transition",
-                    active ? "border-stone-950 bg-stone-950 text-white" : "border-stone-200 bg-white text-stone-800 hover:bg-stone-50",
-                  )}
-                  onClick={() => onTogglePromptSelection(item.id)}
-                >
-                  {item.example_images?.[0] ? <PromptExampleImage src={item.example_images[0]} alt={`${item.name} 示例`} className="size-14" /> : null}
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="truncate text-sm font-medium">{item.name}</span>
-                      <span className={cn("shrink-0 rounded-lg px-2 py-0.5 text-xs", active ? "bg-white/15 text-white" : "bg-stone-100 text-stone-500")}>{item.type}</span>
+                <div key={item.id} className="rounded-xl border border-stone-200 bg-white px-3 py-2 text-stone-800">
+                  <div className="flex items-center gap-3">
+                    {item.example_images?.[0] ? <PromptExampleImage src={item.example_images[0]} alt={`${item.name} 示例`} className="size-14" /> : null}
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="truncate text-sm font-medium">{item.name}</span>
+                        <span className="shrink-0 rounded-lg bg-stone-100 px-2 py-0.5 text-xs text-stone-500">{item.type}</span>
+                      </div>
+                      <div className="mt-1 line-clamp-2 text-xs leading-5 text-stone-500">{item.content}</div>
                     </div>
-                    <div className={cn("mt-1 line-clamp-2 text-xs leading-5", active ? "text-white/75" : "text-stone-500")}>{item.content}</div>
                   </div>
-                </button>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <Button type="button" variant="outline" size="sm" onClick={() => onPromptChange(item.content)}>替换当前提示词</Button>
+                    <Button type="button" variant="outline" size="sm" onClick={() => onPromptChange(prompt.trim() ? `${prompt}\n\n${item.content}` : item.content)}>追加到后面</Button>
+                  </div>
+                </div>
               );
             })
           )}
