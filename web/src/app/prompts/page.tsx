@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowLeft, ChevronRight, Copy, Download, ExternalLink, Link2, LoaderCircle, Pencil, Plus, Rss, Search, Trash2, X } from "lucide-react";
+import { ArrowLeft, ChevronRight, Copy, Download, Link2, LoaderCircle, Pencil, Plus, Rss, Search, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -91,7 +91,7 @@ export default function PromptsPage() {
     return items.filter((item) => {
       const matchesType = typeFilter === "all" || item.type === typeFilter;
       const haystack = `${item.name}\n${item.type}\n${item.content}\n${item.note || ""}\n${item.source_url || ""}`.toLowerCase();
-      return matchesType && (!keyword || haystack.includes(keyword));
+      return Boolean(item.example_images?.length) && matchesType && (!keyword || haystack.includes(keyword));
     });
   }, [items, query, typeFilter]);
   const pageCount = Math.max(1, Math.ceil(filtered.length / 30));
@@ -243,7 +243,7 @@ export default function PromptsPage() {
         <div className="flex shrink-0 flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div>
             <h1 className="text-2xl font-semibold tracking-tight text-stone-950">提示词</h1>
-            <p className="mt-1 text-sm text-stone-500">浏览常用提示词与示例图，按名称或分类快速查找。</p>
+            <p className="mt-1 text-sm text-stone-500">浏览示例图片，按名称或分类快速查找。</p>
           </div>
           <DialogTrigger asChild>
             <Button className="h-10 shrink-0 rounded-xl bg-stone-950 px-4 text-white hover:bg-stone-800" disabled={busy}>
@@ -273,42 +273,34 @@ export default function PromptsPage() {
             <div className="flex gap-2"><Button size="sm" variant="outline" disabled={currentPage === 1} onClick={() => setPage(currentPage - 1)}>上一页</Button><Button size="sm" variant="outline" disabled={currentPage === pageCount} onClick={() => setPage(currentPage + 1)}>下一页</Button></div>
           </div>
 
-          <div aria-label="提示词列表" key={`${currentPage}:${query}:${typeFilter}`} className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
+          <div aria-label="提示词列表" key={`${currentPage}:${query}:${typeFilter}`} className="min-h-0 flex-1 overflow-y-auto pr-1">
             {loading ? (
               <div className="flex h-40 items-center justify-center"><LoaderCircle className="size-5 animate-spin text-stone-400" /></div>
             ) : filtered.length === 0 ? (
-              <div className="flex h-40 items-center justify-center rounded-xl border border-dashed border-stone-200 bg-stone-50 text-sm text-stone-500">暂无提示词</div>
+              <div className="flex h-40 items-center justify-center rounded-xl border border-dashed border-stone-200 bg-stone-50 text-sm text-stone-500">暂无示例图片</div>
             ) : (
-              visibleItems.map((item) => (
-                <div key={item.id} className="rounded-xl border border-stone-200 bg-white p-4 sm:p-5">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="truncate text-sm font-semibold text-stone-900">{item.name}</div>
-                      <div className="mt-1 inline-flex rounded-lg bg-stone-100 px-2 py-0.5 text-xs text-stone-500">{item.type}</div>
-                      {item.subscription_id ? <span className="ml-2 text-xs text-stone-500">{item.subscription_override ? "订阅 · 已保留本地修改" : "订阅同步"}</span> : null}
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+                {visibleItems.flatMap((item) =>
+                  (item.example_images || []).map((url, index) => (
+                    <div key={`${item.id}:${index}`} className="group relative min-w-0 overflow-hidden rounded-xl border border-stone-200 bg-white">
+                      <button type="button" aria-label={`预览 ${item.name} 示例图 ${index + 1}`} className="block w-full cursor-zoom-in" onClick={() => openPreview(item.example_images || [], index)}>
+                        <PromptExampleImage src={url} alt={`${item.name} 示例效果图 ${index + 1}`} className="aspect-square w-full rounded-none" />
+                      </button>
+                      <div className="absolute right-2 top-2 flex gap-1 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100">
+                        <Button variant="outline" size="sm" aria-label={`复制 ${item.name}`} title="复制提示词" className="size-8 rounded-lg border-stone-200 bg-white/95 p-0" onClick={() => void copyPrompt(item.content)}>
+                          <Copy className="size-3.5" />
+                        </Button>
+                        <Button variant="outline" size="sm" aria-label={`编辑 ${item.name}`} title="编辑提示词" disabled={busy} className="size-8 rounded-lg border-stone-200 bg-white/95 p-0" onClick={() => editPrompt(item)}>
+                          <Pencil className="size-3.5" />
+                        </Button>
+                        <Button variant="outline" size="sm" aria-label={`删除 ${item.name}`} title="删除提示词" disabled={busy} className="size-8 rounded-lg border-stone-200 bg-white/95 p-0 text-rose-600" onClick={() => void remove(item.id)}>
+                          <Trash2 className="size-3.5" />
+                        </Button>
+                      </div>
                     </div>
-                    <div className="flex shrink-0 gap-1">
-                      <Button variant="outline" size="sm" aria-label={`复制 ${item.name}`} title="复制提示词" className="h-8 rounded-xl border-stone-200 bg-white" onClick={() => void copyPrompt(item.content)}>
-                        <Copy className="size-3.5" />复制
-                      </Button>
-                      <Button variant="outline" size="sm" aria-label={`编辑 ${item.name}`} disabled={busy} className="size-8 rounded-xl border-stone-200 bg-white p-0" onClick={() => editPrompt(item)}>
-                        <Pencil className="size-3.5" />
-                      </Button>
-                      <Button variant="outline" size="sm" aria-label={`删除 ${item.name}`} disabled={busy} className="size-8 rounded-xl border-stone-200 bg-white p-0 text-rose-600" onClick={() => void remove(item.id)}>
-                        <Trash2 className="size-3.5" />
-                      </Button>
-                    </div>
-                  </div>
-                  {item.example_images?.length ? (
-                    <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
-                      {item.example_images.map((url, index) => <button key={url} type="button" aria-label={`预览 ${item.name} 示例图 ${index + 1}`} className="shrink-0 cursor-zoom-in" onClick={() => openPreview(item.example_images || [], index)}><PromptExampleImage src={url} alt={`${item.name} 示例效果图 ${index + 1}`} className="size-28 sm:size-36" /></button>)}
-                    </div>
-                  ) : null}
-                  <pre className="mt-3 max-h-64 overflow-y-auto whitespace-pre-wrap break-words rounded-xl bg-stone-50 p-4 text-sm leading-6 text-stone-700">{item.content}</pre>
-                  {item.note ? <div className="mt-2 text-xs text-stone-500">{item.note}</div> : null}
-                  {item.source_url ? <a href={item.source_url} target="_blank" rel="noopener noreferrer" className="mt-2 flex items-center gap-1 text-xs text-stone-500 hover:text-stone-900"><ExternalLink className="size-3 shrink-0" /><span className="truncate">查看来源 · {item.source_url}</span></a> : null}
-                </div>
-              ))
+                  ))
+                )}
+              </div>
             )}
           </div>
         </div>
